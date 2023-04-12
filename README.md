@@ -1,7 +1,7 @@
 # DDFM
 Deep Dynamic Factor Models
 
-This package provides replication codes for the following paper.
+This package provides replication codes for the Monte Carlo excercise of the following paper.
 
 Title: 'Deep Dynamic Factor Models'
 
