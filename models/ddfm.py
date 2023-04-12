@@ -384,7 +384,8 @@ if __name__ == "__main__":
     stop = timer()
     print('Elapsed time: ', timedelta(seconds=stop - start))
     # evaluate (Stock and Watson (2002a) and Doz, Giannone, and Reichlin (2006) and use the trace R2)
-    f_hat = ddfm.factors_filtered[n_lags + 1:]  # np.mean(ddfm.factors_filtered, axis=0)
-    precision_score = np.trace(f[n_lags + 1:].T @ f_hat @ np.linalg.pinv(f_hat.T @ f_hat) @ f_hat.T @ f[n_lags + 1:]) / \
-                      np.trace(f[n_lags + 1:].T @ f[n_lags + 1:])
-    print('Precision score filtered: ', precision_score)
+    f_hat = np.mean(ddfm.factors, axis=0)
+    precision_score = np.trace(
+        f[n_lags:].T @ f_hat @ np.linalg.pinv(f_hat.T @ f_hat) @ f_hat.T @ f[n_lags:]) / np.trace(
+        f[n_lags:].T @ f[n_lags:])
+    print('Precision score non filtered: ', precision_score)
