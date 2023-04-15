@@ -64,7 +64,7 @@ class StateSpace(BaseModel):
     def predict_lgss(self, x_hat_start: np.ndarray, sigma_x_hat_start: np.ndarray, steps_ahead: int = 1) -> dict:
         raise NotImplementedError("TODO")
 
-    def kalman_filter(self, z: np.ndarray, standardize=False) -> Tuple[
+    def kalman_filter(self, z: np.ndarray, standardize=False, do_em: bool = False) -> Tuple[
         np.ndarray, np.ndarray]:
         """
         This method implements the Kalman Filter.
@@ -85,5 +85,8 @@ class StateSpace(BaseModel):
             z_cpy = np.reshape(z_cpy, (1, z_cpy.shape[0]))
         z_cpy = np.ma.array(z_cpy)
         z_cpy[np.isnan(z_cpy)] = np.ma.masked
-        (filtered_state_means, filtered_state_covariances) = self.filter_predict.em(z_cpy).filter(z_cpy)
+        if do_em:
+            (filtered_state_means, filtered_state_covariances) = self.filter_predict.em(z_cpy).filter(z_cpy)
+        else:
+            (filtered_state_means, filtered_state_covariances) = self.filter_predict.filter(z_cpy)
         return filtered_state_means, filtered_state_covariances
