@@ -72,8 +72,6 @@ class StateSpace(BaseModel):
             transition: x_t = F x_t-1 + w_t; w_t ∼ N(0, Q)
         Args:
             z: observable realised values
-            x_st: starting values for the states
-            sigma_x_st: starting values for the variance covariance of the states
             standardize: whether to standardize the inputs or not
 
         Returns:
