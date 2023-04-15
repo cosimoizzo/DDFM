@@ -253,7 +253,7 @@ class DDFM(BaseModel):
                     print(f'@Info: iteration: {iter} - new loss: {loss_now} - delta: {delta}')
                 if delta < self.tolerance:
                     not_converged = False
-                    print(f'@Info: Convergence achieved in {iter} iterations - new loss: {loss_now} - delta: {delta}')
+                    print(f'@Info: Convergence achieved in {iter} iterations - new loss: {loss_now} - delta: {delta} < {self.tolerance}')
             # store previous prediction to monitor convergence
             prediction_prev_iter = prediction_iter.copy()
             # update missings
