@@ -53,6 +53,8 @@ class DDFM(BaseModel):
         if factor_oder not in [1, 2]:
             raise ValueError('factor_oder must be 1 or 2')
         # z is the observable
+        print("@Info - Note: Sorting data.")
+        data.sort_index(inplace=True)
         self.mean_z = data.mean().values
         self.sigma_z = data.std().values
         self.data = (data - self.mean_z) / self.sigma_z
@@ -75,7 +77,6 @@ class DDFM(BaseModel):
         else:
             self.filter_type = "ToBeDefined"
         # seed setting
-        assert seed > 0, "Seed must be larger than 0."
         self.rng = np.random.RandomState(seed)
         self.initializer = tf.keras.initializers.GlorotNormal(seed=seed)
         # learning process
@@ -104,7 +105,6 @@ class DDFM(BaseModel):
         self.state_space = None
         self.state_space_dict = dict()
         self.latents = dict()
-        print("@Info - Note: in data, last datapoint must be last observation.")
 
     def build_inputs(self, interpolate: bool = True) -> None:
         """
