@@ -22,7 +22,7 @@ class DDFM(BaseModel):
                  structure_decoder: tuple = None, use_bias: bool = True, factor_oder: int = 2, seed: int = 3,
                  batch_norm: bool = True, link: str = 'relu', learning_rate: float = 0.005,
                  optimizer: str = 'Adam', decay_learning_rate: bool = True,
-                 epochs: int = 100, batch_size: int = 100, max_iter=200, tolerance: float = 0.0001,
+                 epochs: int = 100, batch_size: int = 100, max_iter=200, tolerance: float = 0.0005,
                  disp: int = 10):
         """
 
