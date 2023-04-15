@@ -123,7 +123,7 @@ class DDFM(BaseModel):
             # create lagged Series
             for lag in range(self.lags_input):
                 new_dict['%s_lag%d' % (col_name, lag + 1)] = self.data_mod[col_name].shift(lag + 1)
-        # convert to dictionary
+        # convert to dataframe
         self.data_tmp = pd.DataFrame(new_dict, index=self.data_mod.index)
         # drop initial nans
         self.data_tmp = self.data_tmp[self.lags_input:]
