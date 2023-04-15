@@ -6,7 +6,7 @@ from synthetic_dgp.simulate import SIMULATE
 
 class TestSIMULATE(unittest.TestCase):
     """
-    A class containing tests for the SIMULATE.
+    A class containing tests for SIMULATE.
     """
 
     def setUp(self) -> None:
