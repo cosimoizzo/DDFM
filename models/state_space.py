@@ -1,7 +1,3 @@
-# here I need to build the state space model
-# see https://github.com/rlabbe/filterpy
-# a base init that depending on the type of filter selected with init a different class from
-# filterpy.
 from typing import Tuple
 import numpy as np
 from pykalman import KalmanFilter
