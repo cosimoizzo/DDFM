@@ -301,7 +301,7 @@ class DDFM(BaseModel):
                                       self.state_space_dict["transition"], self.state_space_dict["measurement"],
                                       filter_type=self.filter_type)
 
-    def fit(self):
+    def fit(self, build_state_space: bool = False):
         """
         Method to fit the Deep Dynamic Factor Model.
         Returns:
@@ -310,10 +310,11 @@ class DDFM(BaseModel):
         self.build_model()
         self.pre_train()
         self.train()
-        self.build_state_space()
-        # get filtered factors
-        self.latents["filtered"], self.latents["sigma_kf"] = self.filter(self.data.values)
-        self.factors_filtered = self.latents["filtered"][:, 1:self.structure_encoder[-1] + 1]
+        if build_state_space:
+            self.build_state_space()
+            # get filtered factors
+            self.latents["filtered"], self.latents["sigma_kf"] = self.filter(self.data.values)
+            self.factors_filtered = self.latents["filtered"][:, 1:self.structure_encoder[-1] + 1]
 
     def filter(self, z_t: np.ndarray, standardize: bool = False) -> Tuple[
         np.ndarray, np.ndarray]:
