@@ -101,6 +101,7 @@ class DDFM(BaseModel):
         self.decoder = None
         self.eps = None
         self.factors = None
+        self.last_neurons = None
         self.factors_filtered = None
         self.state_space = None
         self.state_space_dict = dict()
@@ -261,6 +262,16 @@ class DDFM(BaseModel):
             # update idio
             self.eps = self.data_mod_only_miss.values[self.lags_input:] - prediction_iter
             iter += 1
+
+        # get last neurons (making difference between nonlinear and linear decoder)
+        if self.structure_decoder is None:
+            self.last_neurons = self.factors
+        else:
+            decoder_for_last_neuron = keras.Model(self.decoder.input,
+                                                  self.decoder.get_layer(self.decoder.layers[-2].name).output)
+            self.last_neurons = np.array([decoder_for_last_neuron(self.encoder(x_sim_den[i, :, :])) for i in
+                                          range(x_sim_den.shape[0])])
+
         if not_converged:
             print("@Info: Convergence not achieved within the maximum number of iteration!")
 

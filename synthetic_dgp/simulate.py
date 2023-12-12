@@ -37,6 +37,8 @@ class SIMULATE(object):
         self.alpha = alpha
         self.u = u
         self.tau = tau
+        self.linear_f = None
+        self.f = None
 
     def simulate(self, t_obs: int, portion_missings: float = 0.0) -> np.ndarray:
         """
@@ -57,6 +59,7 @@ class SIMULATE(object):
                 f[t, :] = f[t - 1, :] @ A + u_t[t, :]
             else:
                 f[t, :] = u_t[t, :]
+        self.linear_f = f.copy()
         if self.poly_degree > 1:
             poly = PolynomialFeatures(self.poly_degree, include_bias=False)
             f = poly.fit_transform(f)
