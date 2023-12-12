@@ -266,7 +266,7 @@ class DDFM(BaseModel):
 
     def build_state_space(self) -> None:
         """
-        Method to build the state space model from the autoencoder.
+        Method to build the state space model from the autoencoder (decoder).
             measurement: z_t = H x_t + v_t; v_t ∼ N(0, R)
             transition: x_t = F x_t-1 + w_t; w_t ∼ N(0, Q)
         Returns:

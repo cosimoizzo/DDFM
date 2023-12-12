@@ -47,7 +47,7 @@ def convert_decoder_to_numpy(decoder: keras.Model, has_bias: bool, factor_oder: 
 def get_transition_params(f_t: np.ndarray, eps_t: np.ndarray, factor_oder: int, bool_no_miss: np.ndarray) -> Tuple[
     np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Method to calculate tran
+    Method to calculate transition parameters.
     Args:
         f_t: common factors
         eps_t: idiosyncratic terms
@@ -101,7 +101,7 @@ def get_transition_params(f_t: np.ndarray, eps_t: np.ndarray, factor_oder: int, 
             np.hstack((np.zeros((eps_t.shape[1], A_f.shape[1])), A_eps))  # AR 1 idio
         ))
     else:
-        raise NotImplementedError("")
+        raise NotImplementedError("Only VAR(2) or VAR(1) for common factors at the moment.")
     # error term matrix
     w_t = x_t[:, 1:] - A @ x_t[:, :-1]
     W = np.diag(np.diag(np.cov(w_t)))
@@ -135,10 +135,10 @@ def get_idio(eps: np.ndarray, idx_no_missings: np.ndarray, min_obs: int = 10) ->
     for j in range(eps.shape[1]):
         to_select = idx_no_missings[:, j]  # ~np.isnan(self.z_actual[:, j])
         to_select = np.hstack((np.array([False]), to_select[:-1] * to_select[1:]))
-        if np.sum(to_select) > min_obs:
+        if np.sum(to_select) >= min_obs:
             this_eps = eps[to_select, j]
         else:
-            raise ValueError("Not enough observation to estimate idio AR(1) parameters.")
+            raise ValueError(f"Not enough observation ({min_obs}) to estimate idio AR(1) parameters.")
             # this_eps = self.eps[:, j]
         mu_eps[j] = np.mean(this_eps)
         std_eps[j] = np.std(this_eps)
