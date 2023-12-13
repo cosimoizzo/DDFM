@@ -1,4 +1,5 @@
 # This function simulate the DGP, estimates the models, return the performances over n simulations
+import copy
 import time
 import pandas as pd
 import numpy as np
@@ -71,7 +72,7 @@ def run_sims(this_comb: tuple, n_mc_sim: int = 100) -> None:
 
 def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int = 2, poly_degree: int = 1,
                    sign_features: int = 0, n_obs: int = 50, rho: float = 0.7, alpha: float = 0.2, u: float = 0.1,
-                   tau: float = 0) -> dict:
+                   tau: float = 0, nnlin_decoder_ddfm_runs: int = 5) -> dict:
     """
     Method to simulate a factor model, estimate and evaluate a DFM and a DDFM.
     Args:
@@ -86,6 +87,8 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
         alpha: parameter governing serial-correlation of the idiosyncratic components
         u: parameter governing the signal-to-noise ratio
         tau: parameter governing cross-correlation of the idiosyncratic components
+        nnlin_decoder_ddfm_runs: number of runs for the nonlinear decoder to select best seed in terms
+            of training loss
 
     Returns:
         a dictionary with the evaluation scores of the DFM and the DDFM smoothed/non-filtered and filtered.
@@ -122,12 +125,18 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
     # estimate ddfm with non-linear decoder
     structure_encoder_nnlin = (r_hat, r * 9, r * 3, r)
     structure_decoder_nnlin = (r * 3, r * 9, r_hat)
-    deep_dyn_fact_mdl_nnlin = DDFM(pd.DataFrame(x), seed=seed,
-                                   structure_encoder=structure_encoder_nnlin,
-                                   factor_oder=1,
-                                   structure_decoder=structure_decoder_nnlin,
-                                   use_bias=False, link='relu')
-    deep_dyn_fact_mdl_nnlin.fit(build_state_space=False)
+    loss_now = None
+    deep_dyn_fact_mdl_nnlin = None
+    for j_seed in range(nnlin_decoder_ddfm_runs):
+        tmp_deep_dyn_fact_mdl_nnlin = DDFM(pd.DataFrame(x), seed=seed+j_seed,
+                                           structure_encoder=structure_encoder_nnlin,
+                                           factor_oder=1,
+                                           structure_decoder=structure_decoder_nnlin,
+                                           use_bias=False, link='relu')
+        tmp_deep_dyn_fact_mdl_nnlin.fit(build_state_space=False)
+        if loss_now is None or loss_now > tmp_deep_dyn_fact_mdl_nnlin.loss_now:
+            loss_now = tmp_deep_dyn_fact_mdl_nnlin.loss_now
+            deep_dyn_fact_mdl_nnlin = copy.deepcopy(tmp_deep_dyn_fact_mdl_nnlin)
     results_ddfm_nnlin[0] = sim.evaluate(np.mean(deep_dyn_fact_mdl_nnlin.last_neurons, axis=0), f_true=sim.f)
     results_ddfm_nnlin[1] = sim.evaluate(np.mean(deep_dyn_fact_mdl_nnlin.factors, axis=0), f_true=sim.linear_f)
 
