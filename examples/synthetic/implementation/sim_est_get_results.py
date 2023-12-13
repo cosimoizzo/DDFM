@@ -126,19 +126,19 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
     structure_encoder_nnlin = (r_hat, r * 9, r * 3, r)
     structure_decoder_nnlin = (r * 3, r * 9, r_hat)
     loss_now = None
-    deep_dyn_fact_mdl_nnlin = None
     for j_seed in range(nnlin_decoder_ddfm_runs):
-        tmp_deep_dyn_fact_mdl_nnlin = DDFM(pd.DataFrame(x), seed=seed+j_seed,
+        deep_dyn_fact_mdl_nnlin = DDFM(pd.DataFrame(x), seed=seed+j_seed,
                                            structure_encoder=structure_encoder_nnlin,
                                            factor_oder=1,
                                            structure_decoder=structure_decoder_nnlin,
                                            use_bias=False, link='relu')
-        tmp_deep_dyn_fact_mdl_nnlin.fit(build_state_space=False)
-        if loss_now is None or loss_now > tmp_deep_dyn_fact_mdl_nnlin.loss_now:
-            loss_now = tmp_deep_dyn_fact_mdl_nnlin.loss_now
-            deep_dyn_fact_mdl_nnlin = copy.deepcopy(tmp_deep_dyn_fact_mdl_nnlin)
-    results_ddfm_nnlin[0] = sim.evaluate(np.mean(deep_dyn_fact_mdl_nnlin.last_neurons, axis=0), f_true=sim.f)
-    results_ddfm_nnlin[1] = sim.evaluate(np.mean(deep_dyn_fact_mdl_nnlin.factors, axis=0), f_true=sim.linear_f)
+        deep_dyn_fact_mdl_nnlin.fit(build_state_space=False)
+        if loss_now is None or loss_now > deep_dyn_fact_mdl_nnlin.loss_now:
+            loss_now = deep_dyn_fact_mdl_nnlin.loss_now
+            last_neurons = np.mean(deep_dyn_fact_mdl_nnlin.last_neurons, axis=0)
+            factors = np.mean(deep_dyn_fact_mdl_nnlin.factors, axis=0)
+    results_ddfm_nnlin[0] = sim.evaluate(last_neurons, f_true=sim.f)
+    results_ddfm_nnlin[1] = sim.evaluate(factors, f_true=sim.linear_f)
 
     # output dictionary
     out = {"results_dfm": results_dfm,
