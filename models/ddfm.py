@@ -96,6 +96,7 @@ class DDFM(BaseModel):
         else:
             raise KeyError("Optimizer must be SGD or Adam")
         # attributes to be populated
+        self.loss_now = None
         self.autoencoder = None
         self.encoder = None
         self.decoder = None
@@ -249,12 +250,12 @@ class DDFM(BaseModel):
             prediction_iter = np.mean(np.array([self.decoder(self.factors[i, :, :]) for i in range(self.factors.shape[0]
                                                                                                    )]), axis=0)
             if iter > 1:
-                delta, loss_now = convergence_checker(prediction_prev_iter, prediction_iter, self.z_actual)
+                delta, self.loss_now = convergence_checker(prediction_prev_iter, prediction_iter, self.z_actual)
                 if iter % self.disp == 0:
-                    print(f'@Info: iteration: {iter} - new loss: {loss_now} - delta: {delta}')
+                    print(f'@Info: iteration: {iter} - new loss: {self.loss_now} - delta: {delta}')
                 if delta < self.tolerance:
                     not_converged = False
-                    print(f'@Info: Convergence achieved in {iter} iterations - new loss: {loss_now} - delta: {delta} < {self.tolerance}')
+                    print(f'@Info: Convergence achieved in {iter} iterations - new loss: {self.loss_now} - delta: {delta} < {self.tolerance}')
             # store previous prediction to monitor convergence
             prediction_prev_iter = prediction_iter.copy()
             # update missings
