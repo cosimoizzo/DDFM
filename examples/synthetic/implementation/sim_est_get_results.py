@@ -23,8 +23,8 @@ def run_sims(this_comb: tuple, n_mc_sim: int = 100) -> None:
     """
     Method to make a call to simulate a factor model, estimate and evaluate a DFM and a DDFM.
     Args:
-        this_comb: configation of the DGP for the factor model
-        n_mc_sim: number of simulations (for each simulation, a new DGP is generate together with its data and on it a
+        this_comb: configuration of the DGP for the factor model
+        n_mc_sim: number of simulations (for each simulation, a new DGP is generated together with its data and on it a
             DFM and a DDFM are simulated and estimated)
 
     Returns:
@@ -49,6 +49,7 @@ def run_sims(this_comb: tuple, n_mc_sim: int = 100) -> None:
 
     results_dfm = np.zeros((n_mc_sim, 2))
     results_ddfm = np.zeros((n_mc_sim, 2))
+    results_ddfm_nnlin = np.zeros((n_mc_sim, 2))
     for n_mc in range(n_mc_sim):
         out = run_single_sim(seed=n_mc + 1, portion_missings=portion_missings,
                                                                      n=n,
@@ -58,9 +59,13 @@ def run_sims(this_comb: tuple, n_mc_sim: int = 100) -> None:
                                                                      rho=rho, alpha=alpha, u=u, tau=tau)
         results_dfm[n_mc, :] = out["results_dfm"]
         results_ddfm[n_mc, :] = out["results_ddfm"]
+        results_ddfm_nnlin[n_mc, :] = out["results_ddfm_nnlin"]
         del out
-    df_results = pd.DataFrame(np.hstack((results_dfm, results_ddfm)), columns=['dfm smoothed', 'dfm filtered',
-                                                                               'ddfm non-filtered', 'ddfm filtered'])
+    df_results = pd.DataFrame(np.hstack((results_dfm, results_ddfm, results_ddfm_nnlin)),
+                              columns=['dfm smoothed', 'dfm filtered',
+                                       'ddfm code', 'ddfm code filtered',
+                                       'ddfm nnlin last neurons', 'ddfm nnlin (code vs linear f)',
+                                       ])
     df_results.to_csv(dir_name_file)
 
 
@@ -89,6 +94,7 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
     # np.random.seed(seed)
     results_dfm = np.zeros(2)
     results_ddfm = np.zeros(2)
+    results_ddfm_nnlin = np.zeros(2)
 
     # simulate DGP
     sim = SIMULATE(seed=seed, n=n, r=r, poly_degree=poly_degree, sign_features=sign_features, rho=rho, alpha=alpha, u=u,
@@ -102,19 +108,34 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
     results_dfm[0] = sim.evaluate(res_dyn_fact_mdl.factors.smoothed.values, f_true=sim.f)
     results_dfm[1] = sim.evaluate(res_dyn_fact_mdl.factors.filtered.values, f_true=sim.f)
 
-    # estimate ddfm
+    # estimate ddfm with linear decoder
     if poly_degree > 1:
         structure_encoder = (r_hat * 6, r_hat * 4, r_hat * 2, r_hat)
     else:
         structure_encoder = (r_hat,)
     deep_dyn_fact_mdl = DDFM(pd.DataFrame(x), seed=seed, structure_encoder=structure_encoder, factor_oder=1,
                              use_bias=False, link='relu')
-    deep_dyn_fact_mdl.fit()
+    deep_dyn_fact_mdl.fit(build_state_space=True)
     results_ddfm[0] = sim.evaluate(np.mean(deep_dyn_fact_mdl.factors, axis=0), f_true=sim.f)
     results_ddfm[1] = sim.evaluate(deep_dyn_fact_mdl.factors_filtered, f_true=sim.f)
+
+    # estimate ddfm with non-linear decoder
+    structure_encoder_nnlin = (r_hat, r * 9, r * 3, r)
+    structure_decoder_nnlin = (r * 3, r * 9, r_hat)
+    deep_dyn_fact_mdl_nnlin = DDFM(pd.DataFrame(x), seed=seed,
+                                   structure_encoder=structure_encoder_nnlin,
+                                   factor_oder=1,
+                                   structure_decoder=structure_decoder_nnlin,
+                                   use_bias=False, link='relu')
+    deep_dyn_fact_mdl_nnlin.fit(build_state_space=False)
+    results_ddfm_nnlin[0] = sim.evaluate(np.mean(deep_dyn_fact_mdl_nnlin.last_neurons, axis=0), f_true=sim.f)
+    results_ddfm_nnlin[1] = sim.evaluate(np.mean(deep_dyn_fact_mdl_nnlin.factors, axis=0), f_true=sim.linear_f)
+
     # output dictionary
     out = {"results_dfm": results_dfm,
-           "results_ddfm": results_ddfm}
+           "results_ddfm": results_ddfm,
+           "results_ddfm_nnlin": results_ddfm_nnlin,
+           }
     return out
 
 

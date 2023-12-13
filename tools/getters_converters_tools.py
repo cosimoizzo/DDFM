@@ -115,7 +115,7 @@ def get_transition_params(f_t: np.ndarray, eps_t: np.ndarray, factor_oder: int, 
     return A, W, mu_0, Σ_0, x_t
 
 
-def get_idio(eps: np.ndarray, idx_no_missings: np.ndarray, min_obs: int = 10) -> Tuple[
+def get_idio(eps: np.ndarray, idx_no_missings: np.ndarray, min_obs: int = 5) -> Tuple[
     np.ndarray, np.ndarray, np.ndarray]:
     """
     Method to get AR(1) statistics from eps.
