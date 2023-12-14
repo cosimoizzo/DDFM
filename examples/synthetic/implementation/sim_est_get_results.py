@@ -49,8 +49,8 @@ def run_sims(this_comb: tuple, n_mc_sim: int = 100) -> None:
         sign_features = 0
 
     results_dfm = np.zeros((n_mc_sim, 2))
-    results_ddfm = np.zeros((n_mc_sim, 2))
-    results_ddfm_nnlin = np.zeros((n_mc_sim, 2))
+    results_ddfm = np.zeros((n_mc_sim, 3))
+    results_ddfm_nnlin = np.zeros((n_mc_sim, 3))
     for n_mc in range(n_mc_sim):
         out = run_single_sim(seed=n_mc + 1, portion_missings=portion_missings,
                                                                      n=n,
@@ -64,8 +64,8 @@ def run_sims(this_comb: tuple, n_mc_sim: int = 100) -> None:
         del out
     df_results = pd.DataFrame(np.hstack((results_dfm, results_ddfm, results_ddfm_nnlin)),
                               columns=['dfm smoothed', 'dfm filtered',
-                                       'ddfm code', 'ddfm code filtered',
-                                       'ddfm nnlin last neurons', 'ddfm nnlin (code vs linear f)',
+                                       'ddfm code', 'ddfm code reduced size', 'ddfm code reduced size vs linear f',
+                                       'ddfm nnlin last neurons', 'ddfm nnlin code', 'ddfm nnlin code vs linear f',
                                        ])
     df_results.to_csv(dir_name_file)
 
@@ -96,8 +96,8 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
     # random.seed(seed)
     # np.random.seed(seed)
     results_dfm = np.zeros(2)
-    results_ddfm = np.zeros(2)
-    results_ddfm_nnlin = np.zeros(2)
+    results_ddfm = np.zeros(3)
+    results_ddfm_nnlin = np.zeros(3)
 
     # simulate DGP
     sim = SIMULATE(seed=seed, n=n, r=r, poly_degree=poly_degree, sign_features=sign_features, rho=rho, alpha=alpha, u=u,
@@ -118,9 +118,18 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
         structure_encoder = (r_hat,)
     deep_dyn_fact_mdl = DDFM(pd.DataFrame(x), seed=seed, structure_encoder=structure_encoder, factor_oder=1,
                              use_bias=False, link='relu')
-    deep_dyn_fact_mdl.fit(build_state_space=True)
+    deep_dyn_fact_mdl.fit(build_state_space=False)
     results_ddfm[0] = sim.evaluate(np.mean(deep_dyn_fact_mdl.factors, axis=0), f_true=sim.f)
-    results_ddfm[1] = sim.evaluate(deep_dyn_fact_mdl.factors_filtered, f_true=sim.f)
+    # estimate ddfm with linear decoder but reduced code size and compare against nonlinear and linear factors
+    # (only if nonlin dgp)
+    if poly_degree > 1:
+        # using same encoder structure of the symmetric autoencoder below
+        structure_encoder = (r_hat, r * 9, r * 3, r)
+        deep_dyn_fact_mdl = DDFM(pd.DataFrame(x), seed=seed, structure_encoder=structure_encoder, factor_oder=1,
+                                 use_bias=False, link='relu')
+        deep_dyn_fact_mdl.fit(build_state_space=False)
+        results_ddfm[1] = sim.evaluate(np.mean(deep_dyn_fact_mdl.factors, axis=0), f_true=sim.f)
+        results_ddfm[2] = sim.evaluate(np.mean(deep_dyn_fact_mdl.factors, axis=0), f_true=sim.linear_f)
 
     # estimate ddfm with non-linear decoder
     structure_encoder_nnlin = (r_hat, r * 9, r * 3, r)
@@ -138,7 +147,8 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
             last_neurons = np.mean(deep_dyn_fact_mdl_nnlin.last_neurons, axis=0)
             factors = np.mean(deep_dyn_fact_mdl_nnlin.factors, axis=0)
     results_ddfm_nnlin[0] = sim.evaluate(last_neurons, f_true=sim.f)
-    results_ddfm_nnlin[1] = sim.evaluate(factors, f_true=sim.linear_f)
+    results_ddfm_nnlin[1] = sim.evaluate(factors, f_true=sim.f)
+    results_ddfm_nnlin[2] = sim.evaluate(factors, f_true=sim.linear_f)
 
     # output dictionary
     out = {"results_dfm": results_dfm,
