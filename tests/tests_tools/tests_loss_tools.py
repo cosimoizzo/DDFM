@@ -4,7 +4,7 @@ import tensorflow as tf
 from tools.loss_tools import mse_missing, convergence_checker
 
 
-class TestDDFM(unittest.TestCase):
+class TestLossTools(unittest.TestCase):
     """
     A class containing tests for methods in tools.loss_tools.
     """
