@@ -96,11 +96,13 @@ class DDFM(BaseModel):
         else:
             raise KeyError("Optimizer must be SGD or Adam")
         # attributes to be populated
+        self.loss_now = None
         self.autoencoder = None
         self.encoder = None
         self.decoder = None
         self.eps = None
         self.factors = None
+        self.last_neurons = None
         self.factors_filtered = None
         self.state_space = None
         self.state_space_dict = dict()
@@ -248,12 +250,12 @@ class DDFM(BaseModel):
             prediction_iter = np.mean(np.array([self.decoder(self.factors[i, :, :]) for i in range(self.factors.shape[0]
                                                                                                    )]), axis=0)
             if iter > 1:
-                delta, loss_now = convergence_checker(prediction_prev_iter, prediction_iter, self.z_actual)
+                delta, self.loss_now = convergence_checker(prediction_prev_iter, prediction_iter, self.z_actual)
                 if iter % self.disp == 0:
-                    print(f'@Info: iteration: {iter} - new loss: {loss_now} - delta: {delta}')
+                    print(f'@Info: iteration: {iter} - new loss: {self.loss_now} - delta: {delta}')
                 if delta < self.tolerance:
                     not_converged = False
-                    print(f'@Info: Convergence achieved in {iter} iterations - new loss: {loss_now} - delta: {delta} < {self.tolerance}')
+                    print(f'@Info: Convergence achieved in {iter} iterations - new loss: {self.loss_now} - delta: {delta} < {self.tolerance}')
             # store previous prediction to monitor convergence
             prediction_prev_iter = prediction_iter.copy()
             # update missings
@@ -261,12 +263,22 @@ class DDFM(BaseModel):
             # update idio
             self.eps = self.data_mod_only_miss.values[self.lags_input:] - prediction_iter
             iter += 1
+
+        # get last neurons (making difference between nonlinear and linear decoder)
+        if self.structure_decoder is None:
+            self.last_neurons = self.factors
+        else:
+            decoder_for_last_neuron = keras.Model(self.decoder.input,
+                                                  self.decoder.get_layer(self.decoder.layers[-2].name).output)
+            self.last_neurons = np.array([decoder_for_last_neuron(self.encoder(x_sim_den[i, :, :])) for i in
+                                          range(x_sim_den.shape[0])])
+
         if not_converged:
             print("@Info: Convergence not achieved within the maximum number of iteration!")
 
     def build_state_space(self) -> None:
         """
-        Method to build the state space model from the autoencoder.
+        Method to build the state space model from the autoencoder (decoder).
             measurement: z_t = H x_t + v_t; v_t ∼ N(0, R)
             transition: x_t = F x_t-1 + w_t; w_t ∼ N(0, Q)
         Returns:
@@ -301,7 +313,7 @@ class DDFM(BaseModel):
                                       self.state_space_dict["transition"], self.state_space_dict["measurement"],
                                       filter_type=self.filter_type)
 
-    def fit(self):
+    def fit(self, build_state_space: bool = False):
         """
         Method to fit the Deep Dynamic Factor Model.
         Returns:
@@ -310,10 +322,11 @@ class DDFM(BaseModel):
         self.build_model()
         self.pre_train()
         self.train()
-        self.build_state_space()
-        # get filtered factors
-        self.latents["filtered"], self.latents["sigma_kf"] = self.filter(self.data.values)
-        self.factors_filtered = self.latents["filtered"][:, 1:self.structure_encoder[-1] + 1]
+        if build_state_space:
+            self.build_state_space()
+            # get filtered factors
+            self.latents["filtered"], self.latents["sigma_kf"] = self.filter(self.data.values)
+            self.factors_filtered = self.latents["filtered"][:, 1:self.structure_encoder[-1] + 1]
 
     def filter(self, z_t: np.ndarray, standardize: bool = False) -> Tuple[
         np.ndarray, np.ndarray]:

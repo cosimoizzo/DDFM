@@ -1,12 +1,110 @@
 from typing import Tuple
 import numpy as np
 from pykalman import KalmanFilter
+from pykalman.standard import _last_dims, _filter_predict, _filter_correct
 from models.base_model import BaseModel
+
+
+def _filter(transition_matrices, observation_matrices, transition_covariance,
+            observation_covariance, transition_offsets, observation_offsets,
+            initial_state_mean, initial_state_covariance, observations):
+    """
+    Modified version of the PyKalman _filter.
+    Changes: I modify the original version to deal with missing observations following Shumway and Stoffer (2000,1982).
+    """
+    n_timesteps = observations.shape[0]
+    n_dim_state = len(initial_state_mean)
+    n_dim_obs = observations.shape[1]
+
+    predicted_state_means = np.zeros((n_timesteps, n_dim_state))
+    predicted_state_covariances = np.zeros(
+        (n_timesteps, n_dim_state, n_dim_state)
+    )
+    kalman_gains = np.zeros((n_timesteps, n_dim_state, n_dim_obs))
+    filtered_state_means = np.zeros((n_timesteps, n_dim_state))
+    filtered_state_covariances = np.zeros(
+        (n_timesteps, n_dim_state, n_dim_state)
+    )
+
+    for t in range(n_timesteps):
+        if t == 0:
+            predicted_state_means[t] = initial_state_mean
+            predicted_state_covariances[t] = initial_state_covariance
+        else:
+            transition_matrix = _last_dims(transition_matrices, t - 1)
+            transition_covariance = _last_dims(transition_covariance, t - 1)
+            transition_offset = _last_dims(transition_offsets, t - 1, ndims=1)
+            predicted_state_means[t], predicted_state_covariances[t] = (
+                _filter_predict(
+                    transition_matrix,
+                    transition_covariance,
+                    transition_offset,
+                    filtered_state_means[t - 1],
+                    filtered_state_covariances[t - 1]
+                )
+            )
+
+        observation_matrix = _last_dims(observation_matrices, t).copy()
+        observation_covariance = _last_dims(observation_covariance, t).copy()
+        observation_offset = _last_dims(observation_offsets, t, ndims=1).copy()
+
+        # modification: look for missing values and follow the approach of Shumway and Stoffer (2000,1982)
+        observation_t_mod = observations[t].copy()
+        if np.sum(observation_t_mod.mask) > 0:
+            observation_matrix[observation_t_mod.mask, :] = 0
+            observation_offset[observation_t_mod.mask] = 0
+            variances = observation_covariance[observation_t_mod.mask, observation_t_mod.mask]
+            observation_covariance[observation_t_mod.mask, :] = 0
+            observation_covariance[:, observation_t_mod.mask] = 0
+            observation_covariance[observation_t_mod.mask, observation_t_mod.mask] = variances
+            observation_t_mod[observation_t_mod.mask] = 0
+
+        (kalman_gains[t], filtered_state_means[t],
+         filtered_state_covariances[t]) = (
+            _filter_correct(observation_matrix,
+                            observation_covariance,
+                            observation_offset,
+                            predicted_state_means[t],
+                            predicted_state_covariances[t],
+                            observation_t_mod
+                            )
+        )
+
+    return (predicted_state_means, predicted_state_covariances,
+            kalman_gains, filtered_state_means,
+            filtered_state_covariances)
+
+
+class KalmanFilterMod(KalmanFilter):
+    def filter(self, X):
+        """
+        Modified version of the PyKlman filter.
+        Changes: I modify the _filter function to deal with missing data.
+        """
+        Z = self._parse_observations(X)
+
+        (transition_matrices, transition_offsets, transition_covariance,
+         observation_matrices, observation_offsets, observation_covariance,
+         initial_state_mean, initial_state_covariance) = (
+            self._initialize_parameters()
+        )
+
+        (_, _, _, filtered_state_means,
+         filtered_state_covariances) = (
+            _filter(
+                transition_matrices, observation_matrices,
+                transition_covariance, observation_covariance,
+                transition_offsets, observation_offsets,
+                initial_state_mean, initial_state_covariance,
+                Z
+            )
+        )
+        return (filtered_state_means, filtered_state_covariances)
 
 
 class StateSpace(BaseModel):
     """
-    Base class for state-space models.
+    State-space models.
     """
 
     def __init__(self, mean_z: np.ndarray, sigma_z: np.ndarray, transition_params: dict, measurement_params: dict,
@@ -52,15 +150,15 @@ class StateSpace(BaseModel):
 
         self.H, self.R = measurement_params["H"], measurement_params["R"]
         self.F, self.Q = transition_params["F"], transition_params["Q"]
-        self.filter_predict = KalmanFilter(transition_matrices=self.F, observation_matrices=self.H,
-                                           transition_covariance=self.Q, observation_covariance=self.R)
+        self.filter_predict = KalmanFilterMod(transition_matrices=self.F, observation_matrices=self.H,
+                                              transition_covariance=self.Q, observation_covariance=self.R)
         self.predict = self.predict_lgss
         self.filter = self.kalman_filter
 
     def predict_lgss(self, x_hat_start: np.ndarray, sigma_x_hat_start: np.ndarray, steps_ahead: int = 1) -> dict:
         raise NotImplementedError("TODO")
 
-    def kalman_filter(self, z: np.ndarray, standardize=False, do_em: bool = False) -> Tuple[
+    def kalman_filter(self, z: np.ndarray, standardize: bool = False) -> Tuple[
         np.ndarray, np.ndarray]:
         """
         This method implements the Kalman Filter.
@@ -81,8 +179,5 @@ class StateSpace(BaseModel):
             z_cpy = np.reshape(z_cpy, (1, z_cpy.shape[0]))
         z_cpy = np.ma.array(z_cpy)
         z_cpy[np.isnan(z_cpy)] = np.ma.masked
-        if do_em:
-            (filtered_state_means, filtered_state_covariances) = self.filter_predict.em(z_cpy).filter(z_cpy)
-        else:
-            (filtered_state_means, filtered_state_covariances) = self.filter_predict.filter(z_cpy)
+        (filtered_state_means, filtered_state_covariances) = self.filter_predict.filter(z_cpy)
         return filtered_state_means, filtered_state_covariances
