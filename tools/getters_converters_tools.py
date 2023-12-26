@@ -67,7 +67,7 @@ def get_transition_params(f_t: np.ndarray, eps_t: np.ndarray, factor_oder: int, 
         raise NotImplementedError("Only VAR(2) or VAR(1) for common factors at the moment.")
     # get AR coeffs. from idiosyncratic
     A_eps, _, _ = get_idio(eps_t, bool_no_miss)
-    # companion form x_t = [1, f_t, f_t_1, eps_t]
+    # companion form x_t = [f_t, f_t_1, eps_t]
     if factor_oder == 2:
         x_t = np.vstack((f_t[1:, :].T, f_t[:-1, :].T, eps_t[1:, :].T))
         A = np.vstack((
