@@ -69,17 +69,7 @@ def get_transition_params(f_t: np.ndarray, eps_t: np.ndarray, factor_oder: int, 
     A_eps, _, _ = get_idio(eps_t, bool_no_miss)
     # companion form x_t = [1, f_t, f_t_1, eps_t]
     if factor_oder == 2:
-        # x_t = np.vstack((np.ones((1, f_past.shape[0] + 1)), f_t[1:, :].T, f_t[:-1, :].T, eps_t[1:, :].T))
         x_t = np.vstack((f_t[1:, :].T, f_t[:-1, :].T, eps_t[1:, :].T))
-        # A = np.vstack((
-        #     np.hstack((1, np.zeros(x_t.shape[0] - 1))).reshape(1, -1),  # intercept
-        #     np.hstack(
-        #         (np.zeros((A_f.shape[0], 1)), A_f, np.zeros((A_f.shape[0], x_t.shape[0] - 1 - A_f.shape[1])))),
-        #     # VAR factors
-        #     np.hstack((np.zeros((A_f.shape[0], 1)), np.identity(A_f.shape[0]),
-        #                np.zeros((A_f.shape[0], x_t.shape[0] - 1 - A_f.shape[0])))),
-        #     np.hstack((np.zeros((x_t.shape[0] - (A_f.shape[1] + 1), A_f.shape[1] + 1)), A_eps))  # AR 1 idio
-        # ))
         A = np.vstack((
             np.hstack(
                 (A_f, np.zeros((A_f.shape[0], eps_t.shape[1])))),  # VAR factors
@@ -87,15 +77,7 @@ def get_transition_params(f_t: np.ndarray, eps_t: np.ndarray, factor_oder: int, 
             np.hstack((np.zeros((eps_t.shape[1], A_f.shape[1])), A_eps))  # AR 1 idio
         ))
     elif factor_oder == 1:
-        # x_t = np.vstack((np.ones((1, f_past.shape[0] + 1)), f_t.T, eps_t.T))
         x_t = np.vstack((f_t.T, eps_t.T))
-        # A = np.vstack((
-        #     np.hstack((1, np.zeros(x_t.shape[0] - 1))).reshape(1, -1),  # intercept
-        #     np.hstack(
-        #         (np.zeros((A_f.shape[0], 1)), A_f, np.zeros((A_f.shape[0], x_t.shape[0] - 1 - A_f.shape[1])))),
-        #     # VAR factors
-        #     np.hstack((np.zeros((x_t.shape[0] - (A_f.shape[1] + 1), A_f.shape[1] + 1)), A_eps))  # AR 1 idio
-        # ))
         A = np.vstack((
             np.hstack((A_f, np.zeros((A_f.shape[0], eps_t.shape[1])))),  # VAR factors
             np.hstack((np.zeros((eps_t.shape[1], A_f.shape[1])), A_eps))  # AR 1 idio
