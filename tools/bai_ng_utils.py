@@ -24,25 +24,26 @@ def transform_variables(data, code):
     return data_tr
 
 
-def preprocess_data(data, transform_code_final, target_name, model_name, staz,
+def preprocess_data(data, transform_code_final, target_name, model_name, transform,
                     standardize, start_date):
-    if staz:
-        data = trasnform_variables(data, transform_code_final)
+    if transform:
+        data = transform_variables(data, transform_code_final)
 
     if "SPC" in model_name:
         X_squared = data.drop(target_name, axis=1) ** 2
         X_squared.columns = X_squared.columns + "_squared"
         data = pd.concat([data, X_squared], axis=1)
 
-    mu = data.rolling(10000, min_periods=12).mean()
-    sigma = data.rolling(10000, min_periods=12).std()
+    mu = data.mean()
+    sigma = data.std()
+
     if standardize:
         data_std = (data - mu) / sigma
-        data_std = data_std.ffill().bfill().loc[start_date:]
+        # TODO: @Paolo
+        data_std = data_std.ffill().loc[start_date:]
         return data_std, mu, sigma
-    #     self.X = self.data_staz.drop(self.target_name, axis=1).shift(self.lag_x)
-    #     self.y = self.data_staz[self.target_name]
     else:
+        # TODO: @Paolo
         return data, mu, sigma
 
 
