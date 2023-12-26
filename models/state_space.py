@@ -2,7 +2,6 @@ from typing import Tuple
 import numpy as np
 from pykalman import KalmanFilter
 from pykalman.standard import _last_dims, _filter_predict, _filter_correct
-from models.base_model import BaseModel
 
 
 def _filter(transition_matrices, observation_matrices, transition_covariance,
@@ -102,7 +101,7 @@ class KalmanFilterMod(KalmanFilter):
         return (filtered_state_means, filtered_state_covariances)
 
 
-class StateSpace(BaseModel):
+class StateSpace:
     """
     State-space models.
     """

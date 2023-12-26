@@ -4,7 +4,6 @@ import tensorflow as tf
 from typing import Tuple
 from tensorflow import keras
 from tensorflow.keras import layers
-from models.base_model import BaseModel
 from models.state_space import StateSpace
 from tools.loss_tools import mse_missing, convergence_checker
 from tools.getters_converters_tools import convert_decoder_to_numpy, get_transition_params, get_idio
@@ -13,7 +12,7 @@ from tools.getters_converters_tools import convert_decoder_to_numpy, get_transit
 # tf.config.run_functions_eagerly(True)
 
 
-class DDFM(BaseModel):
+class DDFM:
     """
     A class implementing Deep Dynamic Factor Models.
     """
