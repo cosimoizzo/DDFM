@@ -49,21 +49,27 @@ def run_sims(this_comb: tuple, n_mc_sim: int = 100) -> None:
         sign_features = 0
 
     results_dfm = np.zeros((n_mc_sim, 2))
+    results_dfm_reduced_code_size = np.zeros((n_mc_sim, 2))
     results_ddfm = np.zeros((n_mc_sim, 3))
     results_ddfm_nnlin = np.zeros((n_mc_sim, 3))
     for n_mc in range(n_mc_sim):
         out = run_single_sim(seed=n_mc + 1, portion_missings=portion_missings,
-                                                                     n=n,
-                                                                     r=r, poly_degree=poly_degree,
-                                                                     sign_features=sign_features,
-                                                                     n_obs=n_obs,
-                                                                     rho=rho, alpha=alpha, u=u, tau=tau)
+                             n=n,
+                             r=r, poly_degree=poly_degree,
+                             sign_features=sign_features,
+                             n_obs=n_obs,
+                             rho=rho, alpha=alpha, u=u, tau=tau)
         results_dfm[n_mc, :] = out["results_dfm"]
+        results_dfm_reduced_code_size[n_mc, :] = out["results_dfm_reduced_code_size"]
         results_ddfm[n_mc, :] = out["results_ddfm"]
         results_ddfm_nnlin[n_mc, :] = out["results_ddfm_nnlin"]
         del out
-    df_results = pd.DataFrame(np.hstack((results_dfm, results_ddfm, results_ddfm_nnlin)),
+    df_results = pd.DataFrame(np.hstack((results_dfm,
+                                         results_dfm_reduced_code_size,
+                                         results_ddfm,
+                                         results_ddfm_nnlin)),
                               columns=['dfm smoothed', 'dfm filtered',
+                                       'dfm code reduced size', 'dfm code reduced size vs linear f',
                                        'ddfm code', 'ddfm code reduced size', 'ddfm code reduced size vs linear f',
                                        'ddfm nnlin last neurons', 'ddfm nnlin code', 'ddfm nnlin code vs linear f',
                                        ])
@@ -96,6 +102,7 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
     # random.seed(seed)
     # np.random.seed(seed)
     results_dfm = np.zeros(2)
+    results_dfm_reduced_code_size = np.zeros(2)
     results_ddfm = np.zeros(3)
     results_ddfm_nnlin = np.zeros(3)
 
@@ -110,6 +117,12 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
     res_dyn_fact_mdl = dyn_fact_mdl.fit(disp=10)
     results_dfm[0] = sim.evaluate(res_dyn_fact_mdl.factors.smoothed.values, f_true=sim.f)
     results_dfm[1] = sim.evaluate(res_dyn_fact_mdl.factors.filtered.values, f_true=sim.f)
+
+    # estimate dfm with reduced code size (aka number of factors)
+    dyn_fact_mdl = DFM(pd.DataFrame(x), factors=min(r, x.shape[1]), factor_orders=1)
+    res_dyn_fact_mdl = dyn_fact_mdl.fit(disp=10)
+    results_dfm_reduced_code_size[0] = sim.evaluate(res_dyn_fact_mdl.factors.smoothed.values, f_true=sim.f)
+    results_dfm_reduced_code_size[1] = sim.evaluate(res_dyn_fact_mdl.factors.smoothed.values, f_true=sim.linear_f)
 
     # estimate ddfm with linear decoder
     if poly_degree > 1:
@@ -136,11 +149,11 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
     structure_decoder_nnlin = (r * 3, r * 9, r_hat)
     loss_now = None
     for j_seed in range(nnlin_decoder_ddfm_runs):
-        deep_dyn_fact_mdl_nnlin = DDFM(pd.DataFrame(x), seed=seed+j_seed,
-                                           structure_encoder=structure_encoder_nnlin,
-                                           factor_oder=1,
-                                           structure_decoder=structure_decoder_nnlin,
-                                           use_bias=False, link='relu')
+        deep_dyn_fact_mdl_nnlin = DDFM(pd.DataFrame(x), seed=seed + j_seed,
+                                       structure_encoder=structure_encoder_nnlin,
+                                       factor_oder=1,
+                                       structure_decoder=structure_decoder_nnlin,
+                                       use_bias=False, link='relu')
         deep_dyn_fact_mdl_nnlin.fit(build_state_space=False)
         if loss_now is None or loss_now > deep_dyn_fact_mdl_nnlin.loss_now:
             loss_now = deep_dyn_fact_mdl_nnlin.loss_now
@@ -152,6 +165,7 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
 
     # output dictionary
     out = {"results_dfm": results_dfm,
+           "results_dfm_reduced_code_size": results_dfm_reduced_code_size,
            "results_ddfm": results_ddfm,
            "results_ddfm_nnlin": results_ddfm_nnlin,
            }
