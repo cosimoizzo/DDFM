@@ -27,6 +27,7 @@ class Ddfm_simple(BaseEstimator):
         self.disp = disp
         self.link = link
         self.n_steps_ahead = n_steps_ahead
+        self.model = None
 
     def fit(self, x, y=0):
         if self.symmetric_decoder:
