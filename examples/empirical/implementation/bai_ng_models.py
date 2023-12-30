@@ -77,13 +77,13 @@ class TargetedPredictiors:
 
         var_to_keep_all = pd.DataFrame(var_to_keep_all, columns=["var_name", "tval"])
         var_to_keep_all =var_to_keep_all.set_index("var_name").sort_values(by="tval", ascending=False)
-        self.var_to_keep_all = var_to_keep_all
+        self.var_to_keep_all = var_to_keep_all.index
         
         # select vars
         if self.n_targeted_predictors is None:
             self.targeted_predictors = self.var_to_keep_all
         else:
-            self.targeted_predictors = self.var_to_keep_all.head(self.n_targeted_predictors).index
+            self.targeted_predictors = self.var_to_keep_all[:self.n_targeted_predictors]
             
 class BaiNgModels:
     def __init__(self, data, transform_code_final,
@@ -106,6 +106,9 @@ class BaiNgModels:
             # set it as GDP
             self.target_name = "GDPC1"
             self.target_freq = "Q"
+        else:
+            self.target_name = target_name
+            self.target_freq = target_freq
         if model_name is None:
             self.model_name = "PC"
             
@@ -119,8 +122,8 @@ class BaiNgModels:
         self.X_all = self.data.drop(self.target_name, axis=1)
         self.y_all= self.data[self.target_name]
 
-        if n_targeted_predictors is None:
-            n_targeted_predictors=5
+#         if n_targeted_predictors is None:
+#             n_targeted_predictors=5
         self.n_targeted_predictors = n_targeted_predictors
 
         # input models
@@ -188,7 +191,23 @@ class BaiNgModels:
                                                     )
                 targeted_pred.fit()
                 self.var_keep_tp = targeted_pred.targeted_predictors
+                if len(self.var_keep_tp) < 10:
+                    print(f"{y.name} decrease tstat value")
+                    targeted_pred = TargetedPredictiors(X, 
+                                                     y,
+                                                     thresh_tstat=self.thresh_tstat/3,
+                                                     lag_x=None, # already lagged
+                                                     target_freq="M",
+                                                     n_targeted_predictors=self.n_targeted_predictors
+                                                    )
+                    targeted_pred.fit()
+                    self.var_keep_tp = targeted_pred.targeted_predictors
+                    if len(self.var_keep_tp) < 10:
+                        print(f"{y.name} Random variable selection")
+                        vars_idx = np.random.randint(1,125,30).tolist()
+                        self.var_keep_tp = X.columns[vars_idx]
                 X = X[self.var_keep_tp]
+                
             # fit PCA
             d, v = eig(X.cov())
             eigvect = v[:, :self.n_factors]
@@ -218,7 +237,6 @@ class BaiNgModels:
             res_=[]
             for i in  range(1,self.lags_f):
                 for j in range(1,self.lags_y):
-
                     name_f = list(factors_reg.filter(like=f'lag{i}').columns)#f"f1_lag{lag}" for lag in range(i)]
                     name_y = [f"{y.name}_lag{lag}" for lag in range(1,j)]
 
@@ -250,7 +268,6 @@ class BaiNgModels:
         
         # return eigvect
     def predict(self, X, y):
-        
         if self.model_name == "LA5":
             X_ = X[self.var_keep_lars]
             
