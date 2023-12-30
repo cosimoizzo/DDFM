@@ -1,24 +1,17 @@
-import pandas as pd
 import statsmodels.api as sm
 
 import pandas as pd
 import numpy as np
-import os
 
-from sklearn.decomposition import PCA
-from numpy.linalg import pinv, eig
+from numpy.linalg import eig
 
-from pandas.tseries.offsets import BDay, Day, MonthEnd, DateOffset
-
-from sklearn.linear_model import LinearRegression
-from sklearn.linear_model import LassoLars, Lars, LassoLarsCV
-from sklearn.model_selection import TimeSeriesSplit, LeaveOneOut, GridSearchCV
+from sklearn.linear_model import Lars
 
 import sys
 parentdir = "/Users/paoloandreini/Desktop/github_repo/DDFM_correction_paper/DDFM/"
 sys.path.insert(0, parentdir)
 print("check and modify parentdir if erro import module")
-from tools.bai_ng_utils import preprocess_data, rename_col_factors
+from examples.empirical.implementation.bai_ng_utils import preprocess_data, rename_col_factors
 
 class TargetedPredictiors:
     def __init__(
@@ -30,7 +23,6 @@ class TargetedPredictiors:
         target_freq=None,
         n_targeted_predictors=None
     ):
-        import statsmodels.api as sm
         self.X = X
         self.y_ = y_
         if thresh_tstat is None:
