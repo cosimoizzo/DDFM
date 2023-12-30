@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from typing import Tuple
+from typing import Tuple, Union
 from tensorflow import keras
 from tensorflow.keras import layers
 from models.state_space import StateSpace
@@ -107,31 +107,36 @@ class DDFM:
         self.state_space_dict = dict()
         self.latents = dict()
 
-    def build_inputs(self, interpolate: bool = True) -> None:
+    def build_inputs(self, interpolate: bool, data_raw: Union[pd.DataFrame, np.ndarray]) -> pd.DataFrame:
         """
         Method to build the inputs of the model from the dataset.
         Args:
             interpolate: whether to interpolate or not the missing values
-
+            data_raw: data from which to build inputs to the model
         Returns:
             None, it updates the data attributes of the class
         """
+        if not isinstance(data_raw, pd.DataFrame):
+            data_raw = pd.DataFrame(data_raw)
 
         # create dict with variables and their lagged values
         new_dict = {}
-        for col_name in self.data_mod:
-            new_dict[col_name] = self.data_mod[col_name]
+        for col_name in data_raw:
+            new_dict[col_name] = data_raw[col_name]
             # create lagged Series
             for lag in range(self.lags_input):
-                new_dict['%s_lag%d' % (col_name, lag + 1)] = self.data_mod[col_name].shift(lag + 1)
+                new_dict['%s_lag%d' % (col_name, lag + 1)] = data_raw[col_name].shift(lag + 1)
         # convert to dataframe
-        self.data_tmp = pd.DataFrame(new_dict, index=self.data_mod.index)
+        data_tmp = pd.DataFrame(new_dict, index=data_raw.index)
         # drop initial nans
-        self.data_tmp = self.data_tmp[self.lags_input:]
+        data_tmp = data_tmp[self.lags_input:]
         # interpolate
-        if interpolate and self.data_tmp.isna().sum().sum() > 0:
-            # self._x_.interpolate(method='spline', limit_direction='forward', inplace=True, order=3)
-            self.data_tmp.interpolate(method='spline', limit_direction='both', inplace=True, order=3)
+        if interpolate and data_tmp.isna().sum().sum() > 0:
+            data_tmp.interpolate(method='spline', limit_direction='both', inplace=True, order=3)
+        return data_tmp
+
+    def _build_inputs(self, interpolate: bool = True) -> None:
+        self.data_tmp = self.build_inputs(interpolate=interpolate, data_raw=self.data_mod)
 
     def build_model(self) -> None:
         """
@@ -186,13 +191,13 @@ class DDFM:
             None, it updates the autoencoders attributes
         """
         # build inputs without interpolation
-        self.build_inputs(interpolate=False)
+        self._build_inputs(interpolate=False)
         # check number of observations, and if not enough then interpolate
         if len(self.data_tmp.dropna()) >= min_obs:
             inpt_pre_train = self.data_tmp.dropna().values
             self.autoencoder.compile(optimizer=self.optimizer, loss='mse')
         else:
-            self.build_inputs()
+            self._build_inputs()
             inpt_pre_train = self.data_tmp.dropna().values
             self.autoencoder.compile(optimizer=self.optimizer, loss=mse_missing)
         # build output
@@ -211,7 +216,7 @@ class DDFM:
         # re-compile the autoencoder to re-init the optimizer and possibly change the objective
         self.autoencoder.compile(optimizer=self.optimizer, loss=mse_missing)
         # construct initial input data
-        self.build_inputs()
+        self._build_inputs()
         # make prediction
         prediction_iter = self.autoencoder.predict(self.data_tmp.values)
         # update missings
@@ -230,7 +235,7 @@ class DDFM:
             # for first observations set to 0 the idio
             self.data_mod[:self.lags_input + 1] = self.data_mod_only_miss[:self.lags_input + 1]
             # gen data_tmp from filtered inputs (self.data_mod above)
-            self.build_inputs()
+            self._build_inputs()
             # gen MC samples for idio (dims = Sim x T x D)
             eps_draws = self.rng.multivariate_normal(mu_eps, np.diag(std_eps), (self.epoch, self.data_tmp.shape[0]))
             # init noisy inputs (dims = Sim x T x D_with_lags)
