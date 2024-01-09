@@ -44,7 +44,7 @@ def untransform_variables(data_tr, code, fcst_h):
             data_untr.loc[:, i] = data_untr.loc[:, i].fillna(value=0).rolling(fcst_h,
                                                                               min_periods=fcst_h).sum() / fcst_h - data_untr.loc[
                                                                                                                    :,
-                                                                                                                   i].shift(1).fillna(
+                                                                                                                   i].shift(fcst_h).fillna(
                 value=0)
         else:
             raise ValueError(f"code {i} - {code[i]} not suported")
