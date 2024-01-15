@@ -18,6 +18,7 @@ class Ddfm_simple(BaseEstimator):
                  symmetric_decoder: bool = False,
                  factor_oder: int = 2,
                  link: str = "relu",
+                 seed: int = 3,
                  disp: int = 100,
                  n_steps_ahead: int = 1):
         self.lags_input = lags_input
@@ -26,6 +27,7 @@ class Ddfm_simple(BaseEstimator):
         self.factor_oder = factor_oder
         self.disp = disp
         self.link = link
+        self.seed = seed
         self.n_steps_ahead = n_steps_ahead
         self.model = None
 
@@ -37,6 +39,7 @@ class Ddfm_simple(BaseEstimator):
         self.model = DDFM(x, lags_input=self.lags_input,
                           structure_encoder=self.structure_encoder,
                           structure_decoder=structure_decoder,
+                          seed=self.seed,
                           link=self.link,
                           factor_oder=self.factor_oder,
                           disp=self.disp)
@@ -125,20 +128,22 @@ class Validate:
         if isinstance(y_true, pd.DataFrame):
             y_true = y_true.values
         if self.n_steps_ahead == 1:
-            y_true_adj = y_true[1:, :]  # one step ahead target
+            y_true_adj = np.concatenate([y_true[1:, :], np.nan * np.ones((1, y_true.shape[1]))]) # one step ahead target
             # to align dimensions
             if y_true_adj.shape[0] > y_pred.shape[0]:
                 y_true_adj = y_true_adj[-y_pred.shape[0]:, :]
         else:
             y_true_adj = np.ones_like(y_pred) * np.nan
             for j in range(self.n_steps_ahead):
-                thisy = y_true[j + 1:, :]
+                thisy = np.concatenate([y_true[j + 1:, :], np.nan * np.ones((j+1, y_true.shape[1]))])
                 # to align dimensions
                 if thisy.shape[0] > y_pred.shape[1]:
                     thisy = thisy[-y_pred.shape[1]:, :]
-                y_true_adj[j, -thisy.shape[0]:, :] = thisy
-        mean_squared_error = np.nanmean((y_true_adj - y_pred) ** 2)
-        return mean_squared_error
+                y_true_adj[j, :, :] = thisy
+        #mean_squared_error = np.nanmean((y_true_adj - y_pred) ** 2)
+        mean_absolute_error = np.nanmean(np.abs(y_pred - y_true_adj) / (1e-6 + np.abs(y_true_adj)))
+        #print("mean_absolute_percentage_error", mean_absolute_error)
+        return mean_absolute_error
 
     def grid_search_cross_validate(self, model, hyper_parameters):
         if self.cv_type == "tssplit":
