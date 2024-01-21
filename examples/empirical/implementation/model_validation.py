@@ -111,7 +111,8 @@ class Validate:
                  max_train_size=None,
                  test_size=10,
                  verbose=1,
-                 n_steps_ahead=1
+                 n_steps_ahead=1,
+                 selected_vars: list = None
                  ):
         self.x = x.copy()
         self.y = x.copy()
@@ -123,6 +124,7 @@ class Validate:
         self.test_size = test_size
         self.verbose = verbose
         self.n_steps_ahead = n_steps_ahead
+        self.selected_vars = selected_vars
 
     def score(self, y_true, y_pred):
         if isinstance(y_true, pd.DataFrame):
@@ -140,10 +142,12 @@ class Validate:
                 if thisy.shape[0] > y_pred.shape[1]:
                     thisy = thisy[-y_pred.shape[1]:, :]
                 y_true_adj[j, :, :] = thisy
-        #mean_squared_error = np.nanmean((y_true_adj - y_pred) ** 2)
-        mean_absolute_error = np.nanmean(np.abs(y_pred - y_true_adj) / (1e-6 + np.abs(y_true_adj)))
-        #print("mean_absolute_percentage_error", mean_absolute_error)
-        return mean_absolute_error
+        if self.selected_vars is None:
+            mean_squared_error = np.nanmean((y_true_adj - y_pred) ** 2)
+        else:
+            mean_squared_error = np.nanmean((y_true_adj[..., self.selected_vars] - y_pred[..., self.selected_vars]) ** 2)
+
+        return mean_squared_error
 
     def grid_search_cross_validate(self, model, hyper_parameters):
         if self.cv_type == "tssplit":
