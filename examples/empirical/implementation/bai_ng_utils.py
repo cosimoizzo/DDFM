@@ -29,7 +29,7 @@ def transform_variables(data, code):
 
 def untransform_variables(data_tr, code, fcst_h):
     """
-    Method to untransform data from stationary to original. We forward fill nan.
+    Method to untransform data from stationary to original. We replace nans with zeros.
 
     """
     data_untr = data_tr.copy(deep=True)
