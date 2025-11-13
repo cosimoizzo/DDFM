@@ -4,7 +4,7 @@ from tensorflow import keras
 
 class MixedFreqMQLayer(keras.layers.Layer):
     """
-    A layer implementing monthly quarterly mixed frequency aggregation.
+    A layer implementing monthly quarterly mixed frequency aggregation following Mariano and Murasawa (2003).
     """
 
     def __init__(self, input_dim: int, start_quarterly: int):

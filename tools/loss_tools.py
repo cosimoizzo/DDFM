@@ -12,7 +12,7 @@ def mse_missing(y_actual: tf.Tensor, y_predicted: tf.Tensor) -> tf.Tensor:
     mask = tf.where(tf.math.is_nan(y_actual), tf.zeros_like(y_actual), tf.ones_like(y_actual))
     y_actual_ = tf.where(tf.math.is_nan(y_actual), tf.zeros_like(y_actual), y_actual)
     y_predicted_ = tf.multiply(y_predicted, mask)
-    return keras.losses.mean_squared_error(y_actual_, y_predicted_)
+    return keras.losses.MSE(y_actual_, y_predicted_)
 
 
 def convergence_checker(y_prev, y_now, y_actual):

@@ -49,14 +49,14 @@ def _filter(transition_matrices, observation_matrices, transition_covariance,
 
         # modification: look for missing values and follow the approach of Shumway and Stoffer (2000,1982)
         observation_t_mod = observations[t].copy()
-        if np.sum(observation_t_mod.mask) > 0:
-            observation_matrix[observation_t_mod.mask, :] = 0
-            observation_offset[observation_t_mod.mask] = 0
-            variances = observation_covariance[observation_t_mod.mask, observation_t_mod.mask]
-            observation_covariance[observation_t_mod.mask, :] = 0
-            observation_covariance[:, observation_t_mod.mask] = 0
-            observation_covariance[observation_t_mod.mask, observation_t_mod.mask] = variances
-            observation_t_mod[observation_t_mod.mask] = 0
+        nan_mask = np.isnan(observation_t_mod)
+        if np.any(nan_mask):
+            observation_offset[nan_mask] = 0
+            observation_matrix[nan_mask, :] = 0
+            observation_covariance[nan_mask, :] = 0
+            observation_covariance[:, nan_mask] = 0
+            observation_covariance[nan_mask, nan_mask] = np.diag(observation_covariance)[nan_mask]
+            observation_t_mod[nan_mask] = 0
 
         (kalman_gains[t], filtered_state_means[t],
          filtered_state_covariances[t]) = (
