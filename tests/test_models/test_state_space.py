@@ -8,7 +8,7 @@ from models.state_space import KalmanFilterMod
 class TestKalmanFilterMod(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.rng = np.random.RandomState(123)
+        cls.rng = np.random.RandomState(123456)
         cls.n = 5
         cls.d = 2
         cls.F = 0.9 * np.eye(cls.d)
@@ -49,6 +49,21 @@ class TestKalmanFilterMod(unittest.TestCase):
         hat_x_t = kalman_filter.filter(y_t)[0]
         np.testing.assert_allclose(hat_x_t, hat_mod_x_t, rtol=1e-5)
 
+    def test_smooth(self):
+        """
+        Same as test_filter but with smoothing
+        """
+        y_t, x_t = self._gen_values()
+        kalman_filter = KalmanFilter(transition_matrices=self.F, observation_matrices=self.H,
+                                     transition_covariance=self.Q, observation_covariance=self.R)
+        kalman_filter_mod = KalmanFilterMod(transition_matrices=self.F, observation_matrices=self.H,
+                                            transition_covariance=self.Q, observation_covariance=self.R)
+        hat_mod_x_t = kalman_filter_mod.smooth(y_t)[0]
+        r2 = 1 - np.sum(np.pow(hat_mod_x_t - x_t, 2))/np.sum(np.pow(x_t, 2))
+        self.assertGreater(r2, 0.99)
+        hat_x_t = kalman_filter.smooth(y_t)[0]
+        np.testing.assert_allclose(hat_x_t, hat_mod_x_t, rtol=1e-5)
+
     def test_filter_with_missing(self):
         """
         Given a simulated LGSSM, now with missing data. Check:
@@ -84,6 +99,26 @@ class TestKalmanFilterMod(unittest.TestCase):
         hat_x_t[np.isnan(hat_x_t)] = hat_next_based_on_mod[np.isnan(hat_x_t)]
         r2 = 1 - np.sum(np.pow(hat_x_t - x_t, 2)) / np.sum(np.pow(x_t, 2))
         self.assertGreater(r2_mod_missing, r2)
+
+    def test_smooth_with_missing(self):
+        """
+        Same as test_filter_with_missing but with smoothing. This time only checking:
+            1. modified has no missing values on filtered states, while original does
+            2. r2 is above 0.95
+        """
+        y_t, x_t = self._gen_values(perc_missing= 0.1)
+        kalman_filter = KalmanFilter(transition_matrices=self.F, observation_matrices=self.H,
+                                     transition_covariance=self.Q, observation_covariance=self.R)
+        kalman_filter_mod = KalmanFilterMod(transition_matrices=self.F, observation_matrices=self.H,
+                                            transition_covariance=self.Q, observation_covariance=self.R)
+        hat_mod_x_t = kalman_filter_mod.smooth(y_t)[0]
+        hat_x_t = kalman_filter.smooth(y_t)[0]
+        # 1. checking modified has no missing values, while original version does
+        self.assertEqual(np.sum(np.isnan(hat_mod_x_t)), 0)
+        self.assertGreater(np.sum(np.isnan(hat_x_t)), 0)
+        # 2. R2 on common points is the same
+        r2_mod = 1 - np.nansum(np.pow(hat_mod_x_t - x_t, 2)) / np.sum(np.pow(x_t, 2))
+        self.assertGreater(r2_mod, 0.95)
 
 
 if __name__ == '__main__':
