@@ -34,6 +34,9 @@ class TestKalmanFilterMod(unittest.TestCase):
                     y_t[_row, _col] = np.nan
         return y_t, x_t
 
+    def test_predict(self):
+        raise ValueError("To add test.")
+
     def test_filter(self):
         """
         Given a simulated LGSSM, check filtered states are close to extracted ones and the same of KalmanFilter.
