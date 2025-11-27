@@ -69,7 +69,7 @@ class Ddfm_simple(BaseEstimator):
             steps_ahead = self.n_steps_ahead
         else:
             steps_ahead = n_steps_ahead
-        x_std = (x - self.model.mean_z) / self.model.sigma_z
+        x_std = (x - self.model.mean_data) / self.model.sigma_data
         f_t = self.model.encoder.predict(self.model.build_inputs(interpolate=True, data_raw=x_std).values)
         eps_t = x_std[self.lags_input:].values - self.model.decoder.predict(f_t)
         if self.model.factor_oder == 2:
@@ -94,7 +94,7 @@ class Ddfm_simple(BaseEstimator):
         out_common = self.model.decoder.predict(factors[:, :self.structure_encoder[-1]])
         out_idio = factors[:, -self.model.data.shape[1]:]
         out = out_common + out_idio
-        out = out * self.model.sigma_z + self.model.mean_z
+        out = out * self.model.sigma_data + self.model.mean_data
         return out
 
 

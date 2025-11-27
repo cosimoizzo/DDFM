@@ -54,9 +54,9 @@ class DDFM:
         # z is the observable
         print("@Info - Note: Sorting data.")
         data.sort_index(inplace=True)
-        self.mean_z = data.mean().values
-        self.sigma_z = data.std().values
-        self.data = (data - self.mean_z) / self.sigma_z
+        self.mean_data = data.mean().values
+        self.sigma_data = data.std().values
+        self.data = (data - self.mean_data) / self.sigma_data
         # keep track of the missings locations
         self.bool_miss = self.data.isnull()[lags_input:].values
         self.bool_no_miss = self.bool_miss == False
@@ -296,7 +296,7 @@ class DDFM:
         bs, H = convert_decoder_to_numpy(self.decoder, self.use_bias, self.factor_oder,
                                          structure_decoder=self.structure_decoder)
         # modify mean with the bias term
-        self.mean_z = self.mean_z + bs * self.sigma_z
+        self.mean_data = self.mean_data + bs * self.sigma_data
         # get transition equation params
         F, Q, mu_0, sigma_0, x_t = get_transition_params(f_t, eps_t, factor_oder=self.factor_oder,
                                                          bool_no_miss=self.bool_no_miss)
@@ -313,7 +313,7 @@ class DDFM:
         self.state_space_dict["measurement"] = dict()
         self.state_space_dict["measurement"]["H"] = H
         self.state_space_dict["measurement"]["R"] = R
-        self.state_space = StateSpace(self.mean_z, self.sigma_z,
+        self.state_space = StateSpace(self.mean_data, self.sigma_data,
                                       self.state_space_dict["transition"], self.state_space_dict["measurement"],
                                       filter_type=self.filter_type)
 
