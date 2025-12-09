@@ -237,6 +237,17 @@ class StateSpace:
         else:
             raise NotImplementedError("Only KalmanFilter is implemented at the moment.")
 
+    def _scale_data(self, y: np.ndarray) -> np.ndarray:
+        y_cpy = y.copy()
+        if self.mean_y is not None:
+            y_cpy -= self.mean_y
+        if self.sigma_y is not None:
+            y_cpy /= self.sigma_y
+            # make dimensions consistent
+        if y_cpy.ndim == 1:
+            y_cpy = np.reshape(y_cpy, (1, y_cpy.shape[0]))
+        return y_cpy
+
     def _build_lgssm(self, transition_params: dict, measurement_params: dict) -> None:
         """
         Build a linear gaussian state space model of the following form:
@@ -265,11 +276,7 @@ class StateSpace:
         Returns:
             mean and covariance over the forecasting horizon
         """
-        y_cpy = y.copy()
-        if self.mean_y is not None:
-            y_cpy -= self.mean_y
-        if self.sigma_y is not None:
-            y_cpy /= self.sigma_y
+        y_cpy = self._scale_data(y)
         mean, sigma = self.ssm_repr.predict(y_cpy, steps_ahead=steps_ahead)
         if self.sigma_y is not None:
             mean *= self.sigma_y[None, :]
@@ -288,14 +295,7 @@ class StateSpace:
         Returns:
             filtered states and variance-covariance matrix
         """
-        y_cpy = y.copy()
-        if self.mean_y is not None:
-            y_cpy -= self.mean_y
-        if self.sigma_y is not None:
-            y_cpy /= self.sigma_y
-        # make dimensions consistent
-        if y_cpy.ndim == 1:
-            y_cpy = np.reshape(y_cpy, (1, y_cpy.shape[0]))
+        y_cpy = self._scale_data(y)
         filtered_state_means, filtered_state_covariances = self.ssm_repr.filter(y_cpy)
         return filtered_state_means, filtered_state_covariances
 
@@ -305,18 +305,10 @@ class StateSpace:
         State Space smoothing step
         Args:
             y: observable realised values
-            standardize: whether to standardize the inputs or not
 
         Returns:
             smoothed states and variance-covariance matrix
         """
-        y_cpy = y.copy()
-        if self.mean_y is not None:
-            y_cpy -= self.mean_y
-        if self.sigma_y is not None:
-            y_cpy /= self.sigma_y
-        # make dimensions consistent
-        if y_cpy.ndim == 1:
-            y_cpy = np.reshape(y_cpy, (1, y_cpy.shape[0]))
+        y_cpy = self._scale_data(y)
         smoothed_state_means, smoothed_state_covariances = self.ssm_repr.smooth(y_cpy)
         return smoothed_state_means, smoothed_state_covariances
