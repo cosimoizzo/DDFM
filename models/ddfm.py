@@ -1,14 +1,17 @@
+import logging
+from typing import Tuple, Union
+
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from typing import Tuple, Union
 from tensorflow import keras
 from tensorflow.keras import layers
+
 from models.state_space import StateSpace
 from tools.loss_tools import mse_missing, convergence_checker
 from tools.getters_converters_tools import convert_decoder_to_numpy, get_transition_params, get_idio
 
-
+logger = logging.getLogger('DDFM')
 # tf.config.run_functions_eagerly(True)
 
 
@@ -52,7 +55,7 @@ class DDFM:
         if factor_oder not in [1, 2]:
             raise ValueError('factor_oder must be 1 or 2')
         # z is the observable
-        print("@Info - Note: Sorting data.")
+        logger.info("Note: Sorting data.")
         data.sort_index(inplace=True)
         self.mean_data = data.mean().values
         self.sigma_data = data.std().values
@@ -257,10 +260,10 @@ class DDFM:
             if iter > 1:
                 delta, self.loss_now = convergence_checker(prediction_prev_iter, prediction_iter, self.z_actual)
                 if iter % self.disp == 0:
-                    print(f'@Info: iteration: {iter} - new loss: {self.loss_now} - delta: {delta}')
+                    logger.info(f'iteration: {iter} - new loss: {self.loss_now} - delta: {delta}')
                 if delta < self.tolerance:
                     not_converged = False
-                    print(f'@Info: Convergence achieved in {iter} iterations - new loss: {self.loss_now} - delta: {delta} < {self.tolerance}')
+                    logger.info(f'Convergence achieved in {iter} iterations - new loss: {self.loss_now} - delta: {delta} < {self.tolerance}')
             # store previous prediction to monitor convergence
             prediction_prev_iter = prediction_iter.copy()
             # update missings
@@ -279,7 +282,7 @@ class DDFM:
                                           range(x_sim_den.shape[0])])
 
         if not_converged:
-            print("@Info: Convergence not achieved within the maximum number of iteration!")
+            logger.info("Convergence not achieved within the maximum number of iteration!")
 
     def build_state_space(self) -> None:
         """
