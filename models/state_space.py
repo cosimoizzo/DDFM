@@ -209,7 +209,8 @@ class StateSpace:
     State-space model wrapper around modified PyKalman.
     """
 
-    def __init__(self, mean_y: np.ndarray, sigma_y: np.ndarray, transition_params: dict, measurement_params: dict,
+    def __init__(self, transition_params: dict, measurement_params: dict,
+                 mean_y: np.ndarray = None, sigma_y: np.ndarray = None,
                  filter_type: str = "KalmanFilter"):
         """
         The init method will build the state space model according to the selected filter.
@@ -232,11 +233,11 @@ class StateSpace:
         self.ssm_repr = None
         if filter_type == "KalmanFilter":
             # build a linear gaussian state-space model
-            self.build_lgssm(transition_params, measurement_params)
+            self._build_lgssm(transition_params, measurement_params)
         else:
             raise NotImplementedError("Only KalmanFilter is implemented at the moment.")
 
-    def build_lgssm(self, transition_params: dict, measurement_params: dict) -> None:
+    def _build_lgssm(self, transition_params: dict, measurement_params: dict) -> None:
         """
         Build a linear gaussian state space model of the following form:
             measurement: y_t = H x_t + v_t; v_t ∼ N(0, R)
@@ -264,29 +265,41 @@ class StateSpace:
         Returns:
             mean and covariance over the forecasting horizon
         """
-        raise self.ssm_repr.predict(y, steps_ahead=steps_ahead)
+        y_cpy = y.copy()
+        if self.mean_y is not None:
+            y_cpy -= self.mean_y
+        if self.sigma_y is not None:
+            y_cpy /= self.sigma_y
+        mean, sigma = self.ssm_repr.predict(y_cpy, steps_ahead=steps_ahead)
+        if self.sigma_y is not None:
+            mean *= self.sigma_y[None, :]
+            sigma *= np.outer(self.sigma_y, self.sigma_y)[None, :, :]
+        if self.mean_y is not None:
+            mean += self.mean_y[None, :]
+        return mean, sigma
 
-    def filter(self, y: np.ndarray, standardize: bool = False) -> Tuple[
+    def filter(self, y: np.ndarray) -> Tuple[
         np.ndarray, np.ndarray]:
         """
         State Space filtering step
         Args:
             y: observable realised values
-            standardize: whether to standardize the inputs or not
 
         Returns:
             filtered states and variance-covariance matrix
         """
         y_cpy = y.copy()
-        if standardize:
-            y_cpy = (y_cpy - self.mean_y) / self.sigma_y
+        if self.mean_y is not None:
+            y_cpy -= self.mean_y
+        if self.sigma_y is not None:
+            y_cpy /= self.sigma_y
         # make dimensions consistent
         if y_cpy.ndim == 1:
             y_cpy = np.reshape(y_cpy, (1, y_cpy.shape[0]))
         filtered_state_means, filtered_state_covariances = self.ssm_repr.filter(y_cpy)
         return filtered_state_means, filtered_state_covariances
 
-    def smooth(self, y: np.ndarray, standardize: bool = False) -> Tuple[
+    def smooth(self, y: np.ndarray) -> Tuple[
         np.ndarray, np.ndarray]:
         """
         State Space smoothing step
@@ -298,8 +311,10 @@ class StateSpace:
             smoothed states and variance-covariance matrix
         """
         y_cpy = y.copy()
-        if standardize:
-            y_cpy = (y_cpy - self.mean_y) / self.sigma_y
+        if self.mean_y is not None:
+            y_cpy -= self.mean_y
+        if self.sigma_y is not None:
+            y_cpy /= self.sigma_y
         # make dimensions consistent
         if y_cpy.ndim == 1:
             y_cpy = np.reshape(y_cpy, (1, y_cpy.shape[0]))

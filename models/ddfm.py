@@ -103,6 +103,7 @@ class DDFM:
         self.factors = None
         self.last_neurons = None
         self.factors_filtered = None
+        self.factors_smoothed = None
         self.state_space = None
         self.state_space_dict = dict()
         self.latents = dict()
@@ -313,8 +314,9 @@ class DDFM:
         self.state_space_dict["measurement"] = dict()
         self.state_space_dict["measurement"]["H"] = H
         self.state_space_dict["measurement"]["R"] = R
-        self.state_space = StateSpace(self.mean_data, self.sigma_data,
-                                      self.state_space_dict["transition"], self.state_space_dict["measurement"],
+        self.state_space = StateSpace(self.state_space_dict["transition"], self.state_space_dict["measurement"],
+                                      mean_y=self.mean_data,
+                                      sigma_y=self.sigma_data,
                                       filter_type=self.filter_type)
 
     def fit(self, build_state_space: bool = False):
@@ -329,21 +331,10 @@ class DDFM:
         if build_state_space:
             self.build_state_space()
             # get filtered factors
-            self.latents["filtered"], self.latents["sigma_kf"] = self.filter(self.data.values)
+            self.latents["filtered"], self.latents["sigma_filtered"] = self.state_space.filter(self.data.values)
+            self.latents["smoothed"], self.latents["sigma_smoothed"] = self.state_space.smooth(self.data.values)
             self.factors_filtered = self.latents["filtered"][:, 1:self.structure_encoder[-1] + 1]
-
-    def filter(self, z_t: np.ndarray, standardize: bool = False) -> Tuple[
-        np.ndarray, np.ndarray]:
-        """
-        Method to carry out the filtering in state-space.
-        Args:
-            z_t: observable realised values
-            standardize: whether to standardize the inputs or not
-
-        Returns:
-            filtered states and variance-covariance matrix
-        """
-        return self.state_space.filter(z_t, standardize=standardize)
+            self.factors_smoothed = self.latents["smoothed"][:, 1:self.structure_encoder[-1] + 1]
 
     def predict(self, x_hat_start: np.ndarray, sigma_x_hat_start: np.ndarray, steps_ahead: int = 1) -> dict:
         """

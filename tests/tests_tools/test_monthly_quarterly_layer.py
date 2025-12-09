@@ -56,9 +56,9 @@ class TestMixedFreqMQLayer(unittest.TestCase):
                              start_quarterly=self.start_quarterly)
         ])
         model.compile(loss=tf.losses.MeanSquaredError(),
-                      optimizer=tf.keras.optimizers.SGD(learning_rate=0.005))
-        model.fit(self.x, self.out_expected, epochs=3000,
-                  batch_size=self.x.shape[0])
+                      optimizer=tf.keras.optimizers.SGD(learning_rate=0.05))
+        model.fit(self.x, self.out_expected, epochs=300,
+                  batch_size=self.x.shape[0], verbose=False)
         weights = model.get_weights()
         # True value of the parameter of the first layer is identity matrix, checking mean absolute error below 0.05.
         self.assertLessEqual(np.mean(np.abs(weights[0] - np.eye(self.x.shape[1]))), 0.05,

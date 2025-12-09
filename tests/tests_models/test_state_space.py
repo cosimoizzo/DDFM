@@ -3,9 +3,10 @@ import unittest
 import numpy as np
 from pykalman import KalmanFilter
 
-from models.state_space import KalmanFilterMod
+from models.state_space import KalmanFilterMod, StateSpace
 
-class TestKalmanFilterMod(unittest.TestCase):
+
+class TestBase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.rng = np.random.RandomState(123456)
@@ -32,6 +33,9 @@ class TestKalmanFilterMod(unittest.TestCase):
             cols = flat_idx % self.n
             y_t[rows, cols] = np.nan
         return y_t, x_t
+
+
+class TestKalmanFilterMod(TestBase):
 
     def test_filter(self):
         """
@@ -146,6 +150,42 @@ class TestKalmanFilterMod(unittest.TestCase):
         # 2. R2 on common points is the same
         r2_mod = 1 - np.nansum(np.pow(hat_mod_x_t - x_t, 2)) / np.sum(np.pow(x_t, 2))
         self.assertGreater(r2_mod, 0.95)
+
+
+class TestStateSpace(TestBase):
+    """
+    Testing predict, filter and smooth of the state space wrapper against KalmanFilterMod tested separately.
+    """
+    @classmethod
+    def setUpClass(cls):
+        super(TestStateSpace, cls).setUpClass()
+        cls.kf = KalmanFilterMod(transition_matrices=cls.F, observation_matrices=cls.H,
+                                  transition_covariance=cls.Q, observation_covariance=cls.R)
+        cls.ssm_kf = StateSpace({"F": cls.F, "Q": cls.Q},
+                                {"H": cls.H, "R": cls.R},
+                                np.zeros(cls.n), np.ones(cls.n)
+                                )
+
+    def test_predict(self):
+        y, _ = self._gen_values()
+        mean1, cov1 = self.kf.predict(y, steps_ahead=10)
+        mean2, cov2 = self.ssm_kf.predict(y, steps_ahead=10)
+        np.testing.assert_array_almost_equal(mean1, mean2)
+        np.testing.assert_array_almost_equal(cov1, cov2)
+
+    def test_filter(self):
+        y, _ = self._gen_values()
+        mean1, cov1 = self.kf.filter(y)
+        mean2, cov2 = self.ssm_kf.filter(y)
+        np.testing.assert_array_almost_equal(mean1, mean2)
+        np.testing.assert_array_almost_equal(cov1, cov2)
+
+    def test_smooth(self):
+        y, _ = self._gen_values()
+        mean1, cov1 = self.kf.smooth(y)
+        mean2, cov2 = self.ssm_kf.smooth(y)
+        np.testing.assert_array_almost_equal(mean1, mean2)
+        np.testing.assert_array_almost_equal(cov1, cov2)
 
 
 if __name__ == '__main__':
