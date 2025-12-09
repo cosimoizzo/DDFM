@@ -18,28 +18,25 @@ class TestKalmanFilterMod(unittest.TestCase):
 
     def _gen_values(self, n_obs: int = 100, perc_missing: float = None):
         """
-        x_{t+1}   &= F_{t} x_{t} + \\text{Normal}(0, Q_{t}) \\\\
-        y_{t}     &= H_{t} x_{t} + \\text{Normal}(0, R_{t})
+        x_{t+1}  = F x_{t} + N(0, Q)
+        y_{t}    = H x_{t} + N(0, R)
         """
         x_t = np.zeros((n_obs, self.d))
         for t in range(n_obs):
             x_t[t, :] = self.F @ x_t[t - 1, :] + np.linalg.cholesky(self.Q) @ self.rng.normal(size=(self.d,))
         y_t = x_t @ self.H.T + self.rng.normal(size=(n_obs, self.n)) @ np.linalg.cholesky(self.R).T
         if perc_missing:
-            list_missing_loc = set()
-            while len(list_missing_loc) < int(n_obs * perc_missing):
-                _row, _col = self.rng.choice(n_obs, 1)[0], self.rng.choice(self.n, 1)[0]
-                if (_row, _col) not in list_missing_loc:
-                    list_missing_loc.add((_row, _col))
-                    y_t[_row, _col] = np.nan
+            n_missing = int(n_obs * perc_missing)
+            flat_idx = self.rng.choice(n_obs * self.n, size=n_missing, replace=False)
+            rows = flat_idx // self.n
+            cols = flat_idx % self.n
+            y_t[rows, cols] = np.nan
         return y_t, x_t
-
-    def test_predict(self):
-        raise ValueError("To add test.")
 
     def test_filter(self):
         """
-        Given a simulated LGSSM, check filtered states are close to extracted ones and the same of KalmanFilter.
+        Given a simulated LGSSM, check filtered states are close to extracted ones and the same of original PyKalman
+        implementation.
         """
         y_t, x_t = self._gen_values()
         kalman_filter = KalmanFilter(transition_matrices=self.F, observation_matrices=self.H,
@@ -66,6 +63,33 @@ class TestKalmanFilterMod(unittest.TestCase):
         self.assertGreater(r2, 0.99)
         hat_x_t = kalman_filter.smooth(y_t)[0]
         np.testing.assert_allclose(hat_x_t, hat_mod_x_t, rtol=1e-5)
+
+    def test_predict(self):
+        """
+        Comparing predicted values with calculated from smoothed factors
+        """
+        y_t, _ = self._gen_values()
+        kalman_filter = KalmanFilterMod(transition_matrices=self.F, observation_matrices=self.H,
+                                        transition_covariance=self.Q, observation_covariance=self.R)
+        hat_x = kalman_filter.smooth(y_t)[0]
+        preds_y = kalman_filter.predict(y_t, steps_ahead=1)[0]
+        preds_manual_y = np.zeros_like(preds_y)
+        preds_manual_y[0] = np.dot(self.H, hat_x[-1, :])
+        preds_manual_y[1] = np.dot(self.H, np.dot(self.F, hat_x[-1, :]))
+        np.testing.assert_allclose(preds_y, preds_manual_y, rtol=1e-5)
+
+    def test_fill_na(self):
+        """
+        Comparing fill-na with calculated from smoothed factors
+        """
+        y_t, _ = self._gen_values()
+        y_t[-1, :2] = np.nan
+        kalman_filter = KalmanFilterMod(transition_matrices=self.F, observation_matrices=self.H,
+                                        transition_covariance=self.Q, observation_covariance=self.R)
+        hat_x = kalman_filter.smooth(y_t)[0]
+        preds_y = kalman_filter.fill_na(y_t)[0]
+        preds_manual_y = np.dot(self.H, hat_x[-1, :])
+        np.testing.assert_allclose(preds_y, preds_manual_y, rtol=1e-5)
 
     def test_filter_with_missing(self):
         """

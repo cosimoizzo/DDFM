@@ -172,8 +172,8 @@ class KalmanFilterMod(KalmanFilter):
         predicted_state_mean = smoothed_state_means[-1]
         predicted_state_covariance = smoothed_state_covariances[-1]
         #
-        predicted_observation_mean = np.zeros((steps_ahead, x.shape[1]))
-        predicted_observation_covariance = np.zeros((steps_ahead, x.shape[1], x.shape[1]))
+        predicted_observation_mean = np.zeros((steps_ahead+1, x.shape[1]))
+        predicted_observation_covariance = np.zeros((steps_ahead+1, x.shape[1], x.shape[1]))
         for i in range(steps_ahead + 1):
             predicted_observation_mean[i] = (
                     np.dot(observation_matrix, predicted_state_mean) + observation_offset
@@ -200,7 +200,8 @@ class KalmanFilterMod(KalmanFilter):
         """
         Fill missing values in the observables
         """
-        return self.predict(x, steps_ahead=0)
+        mean, cov = self.predict(x, steps_ahead=0)
+        return mean[0, ...], cov[0, ...]
 
 
 class StateSpace:
@@ -237,7 +238,7 @@ class StateSpace:
 
     def build_lgssm(self, transition_params: dict, measurement_params: dict) -> None:
         """
-        This method builds a linear gaussian state space model of the following form:
+        Build a linear gaussian state space model of the following form:
             measurement: y_t = H x_t + v_t; v_t ∼ N(0, R)
             transition: x_t = F x_t-1 + w_t; w_t ∼ N(0, Q)
         Args:
@@ -269,7 +270,6 @@ class StateSpace:
         np.ndarray, np.ndarray]:
         """
         State Space filtering step
-
         Args:
             y: observable realised values
             standardize: whether to standardize the inputs or not
@@ -290,7 +290,6 @@ class StateSpace:
         np.ndarray, np.ndarray]:
         """
         State Space smoothing step
-
         Args:
             y: observable realised values
             standardize: whether to standardize the inputs or not

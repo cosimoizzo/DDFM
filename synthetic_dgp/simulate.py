@@ -91,12 +91,10 @@ class SIMULATE(object):
         if portion_missings > 0:
             assert 0 < portion_missings < 1, "Portion Missing should be between 0 and 1"
             n_missings = int(t_obs * self.n * portion_missings)
-            list_missing_loc = set()
-            while len(list_missing_loc) < n_missings:
-                _row, _col = self.rng.choice(t_obs, 1)[0], self.rng.choice(self.n, 1)[0]
-                if (_row, _col) not in list_missing_loc:
-                    list_missing_loc.add((_row, _col))
-                    x[_row, _col] = np.nan
+            flat_idx = self.rng.choice(t_obs * self.n, size=n_missings, replace=False)
+            rows = flat_idx // self.n
+            cols = flat_idx % self.n
+            x[rows, cols] = np.nan
         return x
 
     def evaluate(self, f_hat: np.ndarray, f_true: np.ndarray = None) -> float:
