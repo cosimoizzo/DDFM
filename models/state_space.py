@@ -151,8 +151,18 @@ class KalmanFilterMod(KalmanFilter):
         """
         Predict observables, from 0 (fill missing) to steps_ahead forecasting horizon
         """
-        assert steps_ahead >=0, "Steps Ahead must be positive."
         smoothed_state_means, smoothed_state_covariances = self.smooth(x)
+        predicted_state_mean = smoothed_state_means[-1]
+        predicted_state_covariance = smoothed_state_covariances[-1]
+        return self.predict_from_state(predicted_state_mean, predicted_state_covariance, steps_ahead)
+
+    def predict_from_state(self, predicted_state_mean: np.ndarray, predicted_state_covariance: np.ndarray,
+                           steps_ahead: int):
+        """
+        Predict observables, from 0 (fill missing) to steps_ahead forecasting horizon using starting value from state
+        distribution at time 0.
+        """
+        assert steps_ahead >= 0, "Steps Ahead must be positive."
         (
             transition_matrices,
             transition_offsets,
@@ -169,11 +179,9 @@ class KalmanFilterMod(KalmanFilter):
         observation_matrix = _last_dims(observation_matrices, -1)
         observation_covariance = _last_dims(observation_covariance, -1)
         observation_offset = _last_dims(observation_offsets, -1, ndims=1)
-        predicted_state_mean = smoothed_state_means[-1]
-        predicted_state_covariance = smoothed_state_covariances[-1]
-        #
-        predicted_observation_mean = np.zeros((steps_ahead+1, x.shape[1]))
-        predicted_observation_covariance = np.zeros((steps_ahead+1, x.shape[1], x.shape[1]))
+        predicted_observation_mean = np.zeros((steps_ahead + 1, observation_offset.shape[0]))
+        predicted_observation_covariance = np.zeros((steps_ahead + 1, observation_offset.shape[0],
+                                                     observation_offset.shape[0]))
         for i in range(steps_ahead + 1):
             predicted_observation_mean[i] = (
                     np.dot(observation_matrix, predicted_state_mean) + observation_offset
@@ -226,10 +234,11 @@ class StateSpace:
         self.mean_y = mean_y
         self.sigma_y = sigma_y
         # init parameters of the state space to None
-        self.H = None
-        self.R = None
-        self.F = None
-        self.Q = None
+        self.observation_matrices = None
+        self.observation_covariance = None
+        self.transition_matrices = None
+        self.transition_covariance = None
+        self.observation_offsets = None
         self.ssm_repr = None
         if filter_type == "KalmanFilter":
             # build a linear gaussian state-space model
@@ -251,7 +260,7 @@ class StateSpace:
     def _build_lgssm(self, transition_params: dict, measurement_params: dict) -> None:
         """
         Build a linear gaussian state space model of the following form:
-            measurement: y_t = H x_t + v_t; v_t ∼ N(0, R)
+            measurement: y_t = b + H x_t + v_t; v_t ∼ N(0, R)
             transition: x_t = F x_t-1 + w_t; w_t ∼ N(0, Q)
         Args:
             transition_params: parameters of the transition equation
@@ -261,10 +270,12 @@ class StateSpace:
             None, it updates the class attributes.
         """
 
-        self.H, self.R = measurement_params["H"], measurement_params["R"]
-        self.F, self.Q = transition_params["F"], transition_params["Q"]
-        self.ssm_repr = KalmanFilterMod(transition_matrices=self.F, observation_matrices=self.H,
-                                              transition_covariance=self.Q, observation_covariance=self.R)
+        self.observation_matrices, self.observation_covariance = measurement_params["observation_matrices"], measurement_params["observation_covariance"]
+        self.observation_offsets = measurement_params.get("observation_offsets", None)
+        self.transition_matrices, self.transition_covariance = transition_params["transition_matrices"], transition_params["transition_covariance"]
+        self.ssm_repr = KalmanFilterMod(transition_matrices=self.transition_matrices, observation_matrices=self.observation_matrices,
+                                        transition_covariance=self.transition_covariance, observation_covariance=self.observation_covariance,
+                                        observation_offsets=self.observation_offsets)
 
     def predict(self, y: np.ndarray, steps_ahead: int) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -277,13 +288,13 @@ class StateSpace:
             mean and covariance over the forecasting horizon
         """
         y_cpy = self._scale_data(y)
-        mean, sigma = self.ssm_repr.predict(y_cpy, steps_ahead=steps_ahead)
-        if self.sigma_y is not None:
-            mean *= self.sigma_y[None, :]
-            sigma *= np.outer(self.sigma_y, self.sigma_y)[None, :, :]
-        if self.mean_y is not None:
-            mean += self.mean_y[None, :]
-        return mean, sigma
+        mean, cov = self.ssm_repr.predict(y_cpy, steps_ahead=steps_ahead)
+        return self._undo_scale_data(mean, cov)
+
+    def predict_from_state(self, state_mean: np.ndarray, state_cov: np.ndarray,
+                           steps_ahead: int) -> Tuple[np.ndarray, np.ndarray]:
+        mean, cov = self.ssm_repr.predict_from_state(state_mean, state_cov, steps_ahead=steps_ahead)
+        return self._undo_scale_data(mean, cov)
 
     def filter(self, y: np.ndarray) -> Tuple[
         np.ndarray, np.ndarray]:
@@ -312,3 +323,11 @@ class StateSpace:
         y_cpy = self._scale_data(y)
         smoothed_state_means, smoothed_state_covariances = self.ssm_repr.smooth(y_cpy)
         return smoothed_state_means, smoothed_state_covariances
+
+    def _undo_scale_data(self, mean: np.ndarray, cov: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        if self.sigma_y is not None:
+            mean *= self.sigma_y[None, :]
+            cov *= np.outer(self.sigma_y, self.sigma_y)[None, :, :]
+        if self.mean_y is not None:
+            mean += self.mean_y[None, :]
+        return mean, cov

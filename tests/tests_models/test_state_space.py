@@ -161,8 +161,8 @@ class TestStateSpace(TestBase):
         super(TestStateSpace, cls).setUpClass()
         cls.kf = KalmanFilterMod(transition_matrices=cls.F, observation_matrices=cls.H,
                                   transition_covariance=cls.Q, observation_covariance=cls.R)
-        cls.ssm_kf = StateSpace({"F": cls.F, "Q": cls.Q},
-                                {"H": cls.H, "R": cls.R},
+        cls.ssm_kf = StateSpace({"transition_matrices": cls.F, "transition_covariance": cls.Q},
+                                {"observation_matrices": cls.H, "observation_covariance": cls.R},
                                 np.zeros(cls.n), np.ones(cls.n)
                                 )
 
