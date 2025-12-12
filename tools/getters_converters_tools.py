@@ -1,5 +1,7 @@
-from typing import Tuple
+from typing import Tuple, Union
+
 import numpy as np
+import pandas as pd
 from tensorflow import keras
 
 
@@ -55,7 +57,8 @@ def get_transition_params(f_t: np.ndarray, eps_t: np.ndarray, factor_oder: int, 
         bool_no_miss: array to keep track of non-missing values
 
     Returns:
-        autoregressive matrix, covariance matrix residuals, unconditional mean, unconditional variance, latent states
+        autoregressive matrix, covariance matrix residuals (diagonal), unconditional mean, unconditional variance,
+            latent states
     """
     if factor_oder == 2:
         f_past = np.hstack((f_t[1:-1, :], f_t[:-2, :]))
@@ -127,3 +130,32 @@ def get_idio(eps: np.ndarray, idx_no_missings: np.ndarray, min_obs: int = 5) -> 
         cov1_eps = np.cov(this_eps[1:], this_eps[:-1])[0][1]
         phi[j, j] = cov1_eps / (std_eps[j] ** 2)
     return phi, mu_eps, std_eps
+
+def get_data_with_lags(interpolate: bool, data_raw: Union[pd.DataFrame, np.ndarray], lags_input: int) -> pd.DataFrame:
+    """
+    Modify input data with interpolation and lagged values
+    Args:
+        interpolate: whether to interpolate or not the missing values
+        data_raw: data from which to build inputs to the model
+        lags_input: number of lags to add to the input data
+
+    Returns:
+        None, it updates the data attributes of the class
+    """
+    # Ensure DataFrame
+    data = pd.DataFrame(data_raw).copy()
+
+    if lags_input > 0:
+        lagged = {
+            f"{col}_lag{lag}": data[col].shift(lag)
+            for col in data.columns
+            for lag in range(1, lags_input + 1)
+        }
+        df = pd.concat([data, pd.DataFrame(lagged)], axis=1)
+        df = df.iloc[lags_input:].reset_index(drop=True)
+    else:
+        df = data.copy()
+
+    if interpolate and df.isna().any().any():
+        df = df.interpolate(method="spline", order=3, limit_direction="both")
+    return df

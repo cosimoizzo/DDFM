@@ -115,14 +115,14 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
     # estimate dfm
     dyn_fact_mdl = DFM(pd.DataFrame(x), factors=min(r_hat, x.shape[1]), factor_orders=1)
     res_dyn_fact_mdl = dyn_fact_mdl.fit(disp=10)
-    results_dfm[0] = sim.evaluate(res_dyn_fact_mdl.factors.smoothed.values, f_true=sim.f)
-    results_dfm[1] = sim.evaluate(res_dyn_fact_mdl.factors.filtered.values, f_true=sim.f)
+    results_dfm[0] = sim.evaluate(res_dyn_fact_mdl.factors_ae.smoothed.values, f_true=sim.f)
+    results_dfm[1] = sim.evaluate(res_dyn_fact_mdl.factors_ae.filtered.values, f_true=sim.f)
 
     # estimate dfm with reduced code size (aka number of factors)
     dyn_fact_mdl = DFM(pd.DataFrame(x), factors=min(r, x.shape[1]), factor_orders=1)
     res_dyn_fact_mdl = dyn_fact_mdl.fit(disp=10)
-    results_dfm_reduced_code_size[0] = sim.evaluate(res_dyn_fact_mdl.factors.smoothed.values, f_true=sim.f)
-    results_dfm_reduced_code_size[1] = sim.evaluate(res_dyn_fact_mdl.factors.smoothed.values, f_true=sim.linear_f)
+    results_dfm_reduced_code_size[0] = sim.evaluate(res_dyn_fact_mdl.factors_ae.smoothed.values, f_true=sim.f)
+    results_dfm_reduced_code_size[1] = sim.evaluate(res_dyn_fact_mdl.factors_ae.smoothed.values, f_true=sim.linear_f)
 
     # estimate ddfm with linear decoder
     if poly_degree > 1:
@@ -132,7 +132,7 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
     deep_dyn_fact_mdl = DDFM(pd.DataFrame(x), seed=seed, structure_encoder=structure_encoder, factor_oder=1,
                              use_bias=False, link='relu')
     deep_dyn_fact_mdl.fit(build_state_space=False)
-    results_ddfm[0] = sim.evaluate(np.mean(deep_dyn_fact_mdl.factors, axis=0), f_true=sim.f)
+    results_ddfm[0] = sim.evaluate(np.mean(deep_dyn_fact_mdl.factors_ae, axis=0), f_true=sim.f)
     # estimate ddfm with linear decoder but reduced code size and compare against nonlinear and linear factors
     # (only if nonlin dgp)
     if poly_degree > 1:
@@ -141,8 +141,8 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
         deep_dyn_fact_mdl = DDFM(pd.DataFrame(x), seed=seed, structure_encoder=structure_encoder, factor_oder=1,
                                  use_bias=False, link='relu')
         deep_dyn_fact_mdl.fit(build_state_space=False)
-        results_ddfm[1] = sim.evaluate(np.mean(deep_dyn_fact_mdl.factors, axis=0), f_true=sim.f)
-        results_ddfm[2] = sim.evaluate(np.mean(deep_dyn_fact_mdl.factors, axis=0), f_true=sim.linear_f)
+        results_ddfm[1] = sim.evaluate(np.mean(deep_dyn_fact_mdl.factors_ae, axis=0), f_true=sim.f)
+        results_ddfm[2] = sim.evaluate(np.mean(deep_dyn_fact_mdl.factors_ae, axis=0), f_true=sim.linear_f)
 
     # estimate ddfm with non-linear decoder
     structure_encoder_nnlin = (r_hat, r * 9, r * 3, r)
@@ -158,7 +158,7 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
         if loss_now is None or loss_now > deep_dyn_fact_mdl_nnlin.loss_now:
             loss_now = deep_dyn_fact_mdl_nnlin.loss_now
             last_neurons = np.mean(deep_dyn_fact_mdl_nnlin.last_neurons, axis=0)
-            factors = np.mean(deep_dyn_fact_mdl_nnlin.factors, axis=0)
+            factors = np.mean(deep_dyn_fact_mdl_nnlin.factors_ae, axis=0)
     results_ddfm_nnlin[0] = sim.evaluate(last_neurons, f_true=sim.f)
     results_ddfm_nnlin[1] = sim.evaluate(factors, f_true=sim.f)
     results_ddfm_nnlin[2] = sim.evaluate(factors, f_true=sim.linear_f)

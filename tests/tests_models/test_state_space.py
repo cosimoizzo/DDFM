@@ -48,7 +48,7 @@ class TestKalmanFilterMod(TestBase):
         kalman_filter_mod = KalmanFilterMod(transition_matrices=self.F, observation_matrices=self.H,
                                             transition_covariance=self.Q, observation_covariance=self.R)
         hat_mod_x_t = kalman_filter_mod.filter(y_t)[0]
-        r2 = 1 - np.sum(np.pow(hat_mod_x_t - x_t, 2))/np.sum(np.pow(x_t, 2))
+        r2 = 1 - np.sum(np.power(hat_mod_x_t - x_t, 2))/np.sum(np.power(x_t, 2))
         self.assertGreater(r2, 0.99)
         hat_x_t = kalman_filter.filter(y_t)[0]
         np.testing.assert_allclose(hat_x_t, hat_mod_x_t, rtol=1e-5)
@@ -63,7 +63,7 @@ class TestKalmanFilterMod(TestBase):
         kalman_filter_mod = KalmanFilterMod(transition_matrices=self.F, observation_matrices=self.H,
                                             transition_covariance=self.Q, observation_covariance=self.R)
         hat_mod_x_t = kalman_filter_mod.smooth(y_t)[0]
-        r2 = 1 - np.sum(np.pow(hat_mod_x_t - x_t, 2))/np.sum(np.pow(x_t, 2))
+        r2 = 1 - np.sum(np.power(hat_mod_x_t - x_t, 2))/np.sum(np.power(x_t, 2))
         self.assertGreater(r2, 0.99)
         hat_x_t = kalman_filter.smooth(y_t)[0]
         np.testing.assert_allclose(hat_x_t, hat_mod_x_t, rtol=1e-5)
@@ -114,21 +114,21 @@ class TestKalmanFilterMod(TestBase):
         self.assertEqual(np.sum(np.isnan(hat_mod_x_t)), 0)
         self.assertGreater(np.sum(np.isnan(hat_x_t)), 0)
         # 2. R2 on common points is the same
-        r2 = 1 - np.nansum(np.pow(hat_x_t - x_t, 2)) / np.sum(np.pow(x_t, 2))
+        r2 = 1 - np.nansum(np.power(hat_x_t - x_t, 2)) / np.sum(np.power(x_t, 2))
         hat_mod_x_t[np.isnan(hat_x_t)] = np.nan
-        r2_mod = 1 - np.nansum(np.pow(hat_mod_x_t - x_t, 2)) / np.sum(np.pow(x_t, 2))
+        r2_mod = 1 - np.nansum(np.power(hat_mod_x_t - x_t, 2)) / np.sum(np.power(x_t, 2))
         self.assertAlmostEqual(r2_mod, r2, places=10)
         # 3. r2 on missing data for modified is larger than 0
         hat_mod_x_t = kalman_filter_mod.filter(y_t)[0]
         hat_mod_x_t[~np.isnan(hat_x_t)] = np.nan
-        r2_mod_missing = 1 - np.nansum(np.pow(hat_mod_x_t - x_t, 2)) / np.sum(np.pow(x_t, 2))
+        r2_mod_missing = 1 - np.nansum(np.power(hat_mod_x_t - x_t, 2)) / np.sum(np.power(x_t, 2))
         self.assertGreater(r2_mod_missing, 0)
         # 4. r2 with modified is better than r2 with original and predicted states for missing values.
         hat_mod_x_t = kalman_filter_mod.filter(y_t)[0]
-        r2_mod_missing = 1 - np.sum(np.pow(hat_mod_x_t - x_t, 2)) / np.sum(np.pow(x_t, 2))
+        r2_mod_missing = 1 - np.sum(np.power(hat_mod_x_t - x_t, 2)) / np.sum(np.power(x_t, 2))
         hat_next_based_on_mod = np.concatenate([np.zeros((1, self.d)), hat_mod_x_t[:-1] @ self.F.T])
         hat_x_t[np.isnan(hat_x_t)] = hat_next_based_on_mod[np.isnan(hat_x_t)]
-        r2 = 1 - np.sum(np.pow(hat_x_t - x_t, 2)) / np.sum(np.pow(x_t, 2))
+        r2 = 1 - np.sum(np.power(hat_x_t - x_t, 2)) / np.sum(np.power(x_t, 2))
         self.assertGreater(r2_mod_missing, r2)
 
     def test_smooth_with_missing(self):
@@ -148,7 +148,7 @@ class TestKalmanFilterMod(TestBase):
         self.assertEqual(np.sum(np.isnan(hat_mod_x_t)), 0)
         self.assertGreater(np.sum(np.isnan(hat_x_t)), 0)
         # 2. R2 on common points is the same
-        r2_mod = 1 - np.nansum(np.pow(hat_mod_x_t - x_t, 2)) / np.sum(np.pow(x_t, 2))
+        r2_mod = 1 - np.nansum(np.power(hat_mod_x_t - x_t, 2)) / np.sum(np.power(x_t, 2))
         self.assertGreater(r2_mod, 0.95)
 
 

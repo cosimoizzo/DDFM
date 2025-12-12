@@ -9,27 +9,26 @@ from tensorflow.keras import layers
 
 from models.state_space import StateSpace
 from tools.loss_tools import mse_missing, convergence_checker
-from tools.getters_converters_tools import convert_decoder_to_numpy, get_transition_params, get_idio
+from tools.getters_converters_tools import convert_decoder_to_numpy, get_transition_params, get_idio, get_data_with_lags
 
-logger = logging.getLogger('DDFM')
 # tf.config.run_functions_eagerly(True)
 
 
 class DDFM:
     """
-    A class implementing Deep Dynamic Factor Models.
+    Deep Dynamic Factor Models
     """
 
-    def __init__(self, data: pd.DataFrame, lags_input: int = 0, structure_encoder: tuple = (16, 4),
+    def __init__(self, lags_input: int = 0, structure_encoder: tuple = (16, 4),
                  structure_decoder: tuple = None, use_bias: bool = True, factor_oder: int = 2, seed: int = 3,
                  batch_norm: bool = True, link: str = 'relu', learning_rate: float = 0.005,
                  optimizer: str = 'Adam', decay_learning_rate: bool = True,
-                 epochs: int = 100, batch_size: int = 100, max_iter: int = 200, tolerance: float = 0.0005,
-                 disp: int = 10):
+                 epochs: int = 100, batch_size: int = 250, max_iter: int = 200, tolerance: float = 0.0005,
+                 disp: int = 10,
+                 logger = logging.getLogger('DDFM')):
         """
 
         Args:
-            data: input data used for model training
             lags_input: number of lags of the inputs on the encoder (default is 0, i.e. same inputs and outputs)
             structure_encoder: number of layers and neurons for the encoder
             structure_decoder: number of layers and neurons for the decoder (default is None, i.e. asymmetric
@@ -49,31 +48,17 @@ class DDFM:
             disp: display intermediate results every "disp" iterations of MCMC
 
         """
-        super().__init__()
         # common factors
         self.factor_oder = factor_oder
         if factor_oder not in [1, 2]:
             raise ValueError('factor_oder must be 1 or 2')
-        # z is the observable
-        logger.info("Note: Sorting data.")
-        data.sort_index(inplace=True)
-        self.mean_data = data.mean().values
-        self.sigma_data = data.std().values
-        self.data = (data - self.mean_data) / self.sigma_data
-        # keep track of the missings locations
-        self.bool_miss = self.data.isnull()[lags_input:].values
-        self.bool_no_miss = self.bool_miss == False
-        # create copies of the original data (needed for training and pre-training)
-        self.data_mod_only_miss, self.data_mod, self.data_tmp = self.data.copy(), self.data.copy(), self.data.copy()
-        self.z_actual = self.data[lags_input:].values
-        # autoencoder structure
         self.lags_input = lags_input
+        # autoencoder structure
         self.structure_encoder = structure_encoder
         self.structure_decoder = structure_decoder
         self.use_bias = use_bias
         self.batch_norm = batch_norm
         self.link = link
-        # self.start_quarterly = start_quarterly
         if self.structure_decoder is None:
             self.filter_type = "KalmanFilter"
         else:
@@ -97,56 +82,121 @@ class DDFM:
             self.optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
         else:
             raise KeyError("Optimizer must be SGD or Adam")
-        # attributes to be populated
+        self.logger = logger
+        # initialize relevant attributes
+        self.data = None
+        self.variable_order = None
+        self.mean_data = None
+        self.sigma_data = None
         self.loss_now = None
         self.autoencoder = None
         self.encoder = None
         self.decoder = None
         self.eps = None
-        self.factors = None
         self.last_neurons = None
+        self.factors_ae = None
         self.factors_filtered = None
         self.factors_smoothed = None
         self.state_space = None
-        self.state_space_dict = dict()
-        self.latents = dict()
+        self._latents = {}
 
-    def build_inputs(self, interpolate: bool, data_raw: Union[pd.DataFrame, np.ndarray]) -> pd.DataFrame:
+    def fit(self, data: pd.DataFrame, build_state_space: bool = False) -> None:
         """
-        Method to build the inputs of the model from the dataset.
+        Model fitting
         Args:
-            interpolate: whether to interpolate or not the missing values
-            data_raw: data from which to build inputs to the model
+            data: data for training
+            build_state_space: whether to build the final state space representation for model inference
+
         Returns:
-            None, it updates the data attributes of the class
+            None, it updates internal attributes and makes the model ready for inference
         """
-        if not isinstance(data_raw, pd.DataFrame):
-            data_raw = pd.DataFrame(data_raw)
+        self._training_data_set_up(data)
+        self._build_model()
+        self._pre_train()
+        self._train()
+        if build_state_space:
+            self.state_space = self.build_state_space()
+            # get filtered factors
+            self._latents["filtered"], self._latents["sigma_filtered"] = self.state_space.filter(self.data.values)
+            self._latents["smoothed"], self._latents["sigma_smoothed"] = self.state_space.smooth(self.data.values)
+            self.factors_filtered = self._latents["filtered"][:, :self.structure_encoder[-1]]
+            self.factors_smoothed = self._latents["smoothed"][:, :self.structure_encoder[-1]]
 
-        # create dict with variables and their lagged values
-        new_dict = {}
-        for col_name in data_raw:
-            new_dict[col_name] = data_raw[col_name]
-            # create lagged Series
-            for lag in range(self.lags_input):
-                new_dict['%s_lag%d' % (col_name, lag + 1)] = data_raw[col_name].shift(lag + 1)
-        # convert to dataframe
-        data_tmp = pd.DataFrame(new_dict, index=data_raw.index)
-        # drop initial nans
-        data_tmp = data_tmp[self.lags_input:]
-        # interpolate
-        if interpolate and data_tmp.isna().sum().sum() > 0:
-            data_tmp.interpolate(method='spline', limit_direction='both', inplace=True, order=3)
-        return data_tmp
-
-    def _build_inputs(self, interpolate: bool = True) -> None:
-        self.data_tmp = self.build_inputs(interpolate=interpolate, data_raw=self.data_mod)
-
-    def build_model(self) -> None:
+    def predict(self, data: pd.DataFrame, steps_ahead: int = 1) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
-        Method to build the keras model.
+        Prediction step using state-space representation
+        Args:
+            data: observable data
+            steps_ahead: number of steps ahead
+
         Returns:
-            None, it updates the attributes related to the autoencoder.
+            mean predictions and covariances
+        """
+        if self.state_space is None:
+            raise ValueError("State space must be built before making inference")
+        mean, cov = self.state_space.predict(data[self.variable_order].sort_index().values, steps_ahead=steps_ahead)
+        return self._numpy_to_df_mean_and_cov(mean, cov, steps_ahead)
+
+    def predict_from_states(self, x_hat_start: np.ndarray, sigma_x_hat_start: np.ndarray, steps_ahead: int = 1) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Prediction step using state-space representation with state starting values
+        Args:
+            x_hat_start: starting values for the state mean
+            sigma_x_hat_start: starting values for the state variance covariance matrix
+            steps_ahead: number of steps ahead
+
+        Returns:
+            mean predictions and covariances
+        """
+        if self.state_space is None:
+            raise ValueError("State space must be built before making inference")
+        mean, cov = self.state_space.predict_from_state(x_hat_start, sigma_x_hat_start, steps_ahead=steps_ahead)
+        return self._numpy_to_df_mean_and_cov(mean, cov, steps_ahead)
+
+    def build_state_space(self) -> StateSpace:
+        """
+        Build state space object from the autoencoder (decoder).
+            measurement: z_t = H(x_t) + v_t; v_t ∼ N(0, R)
+            transition: x_t = F(x_t-1) + w_t; w_t ∼ N(0, Q)
+        Returns:
+            The state space object
+        """
+        # extract common factors
+        f_t = np.mean(self.factors_ae, axis=0)
+        # idio components
+        eps_t = self.eps
+        # get params from decoder (measurement equation)
+        bs, H = convert_decoder_to_numpy(self.decoder, self.use_bias, self.factor_oder,
+                                         structure_decoder=self.structure_decoder)
+        # get transition equation params
+        F, Q, mu_0, sigma_0, x_t = get_transition_params(f_t, eps_t, factor_oder=self.factor_oder,
+                                                         bool_no_miss=self._bool_no_miss)
+        self._latents["ae_states"] = x_t
+        R = np.eye(eps_t.shape[1]) * 1e-15
+        measurement = {"observation_matrices": H, "observation_covariance": R,
+                       "observation_offsets": bs}
+        transition = {"transition_matrices": F, "transition_covariance": Q}
+        return StateSpace(transition, measurement,
+                          mean_y=self.mean_data,
+                          sigma_y=self.sigma_data,
+                          filter_type=self.filter_type)
+
+    def _training_data_set_up(self, data: pd.DataFrame):
+        data.sort_index(inplace=True)
+        self.variable_order = data.columns
+        self.mean_data = data.mean().values
+        self.sigma_data = data.std().values
+        self.data = (data - self.mean_data) / self.sigma_data
+        # keep track of missing
+        self._bool_miss = self.data.isnull()[self.lags_input:].values
+        self._bool_no_miss = self._bool_miss == False
+        # create two copies of the original data which will be modified during training
+        self._data_mod_only_miss, self._data_mod = self.data.copy(), self.data.copy()
+        self._target = self.data[self.lags_input:].values
+
+    def _build_model(self) -> None:
+        """
+        Build the keras model
         """
         # encoder
         inputs_ = keras.Input(shape=(int((self.lags_input + 1) * self.data.shape[1]),))
@@ -183,174 +233,103 @@ class DDFM:
         # autoencoder
         self.autoencoder = keras.Model(inputs_, outputs_)
 
-    def pre_train(self, min_obs: int = 50, mult_epoch_pre: int = 1) -> None:
-        """
-        Method to carry out pre-training of the model.
-        Args:
-            min_obs: minimum number of observations for pre-training with no interpolation for missings
-            mult_epoch_pre: coefficient to be multiplied to number of epochs to deliver to the total number of epochs
-                for pre-training
+    def _build_inputs(self, interpolate: bool = True) -> None:
+        self._data_tmp = get_data_with_lags(interpolate=interpolate, data_raw=self._data_mod, lags_input=self.lags_input)
 
-        Returns:
-            None, it updates the autoencoders attributes
+    def _pre_train(self, min_obs: int = 50, mult_epoch_pre: int = 1) -> None:
+        """
+        Carry out pre-training of the model.
         """
         # build inputs without interpolation
         self._build_inputs(interpolate=False)
         # check number of observations, and if not enough then interpolate
-        if len(self.data_tmp.dropna()) >= min_obs:
-            inpt_pre_train = self.data_tmp.dropna().values
+        if len(self._data_tmp.dropna()) >= min_obs:
+            inpt_pre_train = self._data_tmp.dropna().values
             self.autoencoder.compile(optimizer=self.optimizer, loss='mse')
         else:
             self._build_inputs()
-            inpt_pre_train = self.data_tmp.dropna().values
+            inpt_pre_train = self._data_tmp.dropna().values
             self.autoencoder.compile(optimizer=self.optimizer, loss=mse_missing)
-        # build output
-        oupt_pre_train = self.data_tmp.dropna()[self.data.columns].values
+        # get target
+        oupt_pre_train = self._data_tmp.dropna()[self.variable_order].values
         # fit (pre-train) autoencoder
         self.autoencoder.fit(inpt_pre_train, oupt_pre_train, epochs=self.epoch * mult_epoch_pre,
                              batch_size=self.batch_size,
                              verbose=0)
 
-    def train(self) -> None:
+    def _train(self) -> None:
         """
-        Method to train a Deep Dynamic Factor Model (see Algorithm 1 from the paper.)
-        Returns:
-            None, it updates attributes.
+        Algorithm 1 of the paper.
         """
         # re-compile the autoencoder to re-init the optimizer and possibly change the objective
         self.autoencoder.compile(optimizer=self.optimizer, loss=mse_missing)
         # construct initial input data
         self._build_inputs()
         # make prediction
-        prediction_iter = self.autoencoder.predict(self.data_tmp.values)
+        prediction_iter = self.autoencoder.predict(self._data_tmp.values)
         # update missings
-        self.data_mod_only_miss.values[self.lags_input:][self.bool_miss] = prediction_iter[self.bool_miss]
-        # get idio
-        self.eps = self.data_tmp[self.data.columns].values - prediction_iter
-        # init counters
-        iter = 0
+        self._data_mod_only_miss.values[self.lags_input:][self._bool_miss] = prediction_iter[self._bool_miss]
+        # idiosyncratic term
+        self.eps = self._data_tmp[self.variable_order].values - prediction_iter
+        self._i_iter = 0
         not_converged = True
+        T, D = self._data_tmp.shape[0], self.data.shape[1]
         # start MCMC
-        while not_converged and iter < self.max_iter:
-            # get idio distr
-            phi, mu_eps, std_eps = get_idio(self.eps, self.bool_no_miss)
+        while not_converged and self._i_iter < self.max_iter:
+            # get idio distribution
+            phi, mu_eps, std_eps = get_idio(self.eps, self._bool_no_miss)
             # subtract conditional AR-idio mean from x
-            self.data_mod[self.lags_input + 1:] = self.data_mod_only_miss[self.lags_input + 1:] - self.eps[:-1, :] @ phi
+            self._data_mod[self.lags_input + 1:] = self._data_mod_only_miss[self.lags_input + 1:] - self.eps[:-1, :] @ phi
             # for first observations set to 0 the idio
-            self.data_mod[:self.lags_input + 1] = self.data_mod_only_miss[:self.lags_input + 1]
-            # gen data_tmp from filtered inputs (self.data_mod above)
-            self._build_inputs()
-            # gen MC samples for idio (dims = Sim x T x D)
-            eps_draws = self.rng.multivariate_normal(mu_eps, np.diag(std_eps), (self.epoch, self.data_tmp.shape[0]))
-            # init noisy inputs (dims = Sim x T x D_with_lags)
-            x_sim_den = np.zeros((eps_draws.shape[0], eps_draws.shape[1], eps_draws.shape[2] * (self.lags_input + 1)))
-            # loop over them (MC step)
-            for i in range(self.epoch):
-                x_sim_den[i, :, :] = self.data_tmp.copy()
-                # corrupt input data, only current observations
-                x_sim_den[i, :, :eps_draws[i, :, :].shape[1]] = x_sim_den[i, :,
-                                                                :eps_draws[i, :, :].shape[1]] - eps_draws[i, :, :]
-                # fit autoencoder
-                self.autoencoder.fit(x_sim_den[i, :, :], self.z_actual, epochs=1, batch_size=self.batch_size, verbose=0)
+            self._data_mod[:self.lags_input + 1] = self._data_mod_only_miss[:self.lags_input + 1]
+            # gen data_tmp from data_mod
+            self._build_inputs(interpolate=False)
+            # gen MC samples for idio (dims = Sim x T * D)
+            eps_draws = self.rng.multivariate_normal(mu_eps, np.diag(std_eps), self.epoch * T)
+            x_sim_noisy = np.concatenate([self._data_tmp.copy()] * self.epoch, axis=0)
+            x_sim_noisy[:, :D] -= eps_draws
+            for e in range(self.epoch):
+                for i in range(0, T, self.batch_size):
+                    x_sim = x_sim_noisy[e*T:(e+1)*T]
+                    self.autoencoder.train_on_batch(x_sim[i:i+self.batch_size], self._target[i:i+self.batch_size])
             # update factors: average over all predictions from the MC samples
-            self.factors = np.array([self.encoder(x_sim_den[i, :, :]) for i in range(x_sim_den.shape[0])])
+            factors_ae_sims = self.encoder(x_sim_noisy).numpy()
+            self.factors_ae = factors_ae_sims.reshape(self.epoch, T, -1)
             # check convergence
-            prediction_iter = np.mean(np.array([self.decoder(self.factors[i, :, :]) for i in range(self.factors.shape[0]
-                                                                                                   )]), axis=0)
-            if iter > 1:
-                delta, self.loss_now = convergence_checker(prediction_prev_iter, prediction_iter, self.z_actual)
-                if iter % self.disp == 0:
-                    logger.info(f'iteration: {iter} - new loss: {self.loss_now} - delta: {delta}')
+            decoded_sims = self.decoder(factors_ae_sims).numpy().reshape(self.epoch, T, D)
+            prediction_iter = np.mean(decoded_sims, axis=0)
+            if self._i_iter > 1:
+                delta, self.loss_now = convergence_checker(prediction_prev_iter, prediction_iter, self._target)
+                if self._i_iter % self.disp == 0:
+                    self.logger.info(f'iteration: {self._i_iter} - new loss: {self.loss_now} - delta: {delta}')
                 if delta < self.tolerance:
                     not_converged = False
-                    logger.info(f'Convergence achieved in {iter} iterations - new loss: {self.loss_now} - delta: {delta} < {self.tolerance}')
+                    self.logger.info(f'Convergence achieved in {self._i_iter} iterations - new loss: {self.loss_now} - delta: {delta} < {self.tolerance}')
             # store previous prediction to monitor convergence
             prediction_prev_iter = prediction_iter.copy()
             # update missings
-            self.data_mod_only_miss.values[self.lags_input:][self.bool_miss] = prediction_iter[self.bool_miss]
+            self._data_mod_only_miss.values[self.lags_input:][self._bool_miss] = prediction_iter[self._bool_miss]
             # update idio
-            self.eps = self.data_mod_only_miss.values[self.lags_input:] - prediction_iter
-            iter += 1
+            self.eps = self._data_mod_only_miss.values[self.lags_input:] - prediction_iter
+            self._i_iter += 1
 
         # get last neurons (making difference between nonlinear and linear decoder)
         if self.structure_decoder is None:
-            self.last_neurons = self.factors
+            self.last_neurons = self.factors_ae
         else:
             decoder_for_last_neuron = keras.Model(self.decoder.input,
                                                   self.decoder.get_layer(self.decoder.layers[-2].name).output)
-            self.last_neurons = np.array([decoder_for_last_neuron(self.encoder(x_sim_den[i, :, :])) for i in
-                                          range(x_sim_den.shape[0])])
+            self.last_neurons = decoder_for_last_neuron(self.encoder(x_sim_noisy)).numpy().reshape(self.epoch, T, -1)
 
         if not_converged:
-            logger.info("Convergence not achieved within the maximum number of iteration!")
+            self.logger.info("Convergence not achieved within the maximum number of iteration!")
 
-    def build_state_space(self) -> None:
-        """
-        Method to build the state space model from the autoencoder (decoder).
-            measurement: z_t = H x_t + v_t; v_t ∼ N(0, R)
-            transition: x_t = F x_t-1 + w_t; w_t ∼ N(0, Q)
-        Returns:
-            None, it updates the class attributes.
-        """
-        # extract common factors
-        f_t = np.mean(self.factors, axis=0)
-        # idio components
-        eps_t = self.eps
-        # get params from decoder (measurement equation)
-        bs, H = convert_decoder_to_numpy(self.decoder, self.use_bias, self.factor_oder,
-                                         structure_decoder=self.structure_decoder)
-        # modify mean with the bias term
-        self.mean_data = self.mean_data + bs * self.sigma_data
-        # get transition equation params
-        F, Q, mu_0, sigma_0, x_t = get_transition_params(f_t, eps_t, factor_oder=self.factor_oder,
-                                                         bool_no_miss=self.bool_no_miss)
-        # insert in dictionary
-        self.state_space_dict["transition"] = dict()
-        self.state_space_dict["transition"]["F"] = F
-        self.state_space_dict["transition"]["Q"] = Q
-        self.state_space_dict["transition"]["mu_0"] = mu_0
-        self.state_space_dict["transition"]["Σ_0"] = sigma_0
-        self.latents["ae_states"] = x_t
-        # we set this to a small number, but we could cross-validate to control the signal-to-noise ratio
-        R = np.eye(eps_t.shape[1]) * 1e-15
-        # H = None
-        self.state_space_dict["measurement"] = dict()
-        self.state_space_dict["measurement"]["H"] = H
-        self.state_space_dict["measurement"]["R"] = R
-        self.state_space = StateSpace(self.state_space_dict["transition"], self.state_space_dict["measurement"],
-                                      mean_y=self.mean_data,
-                                      sigma_y=self.sigma_data,
-                                      filter_type=self.filter_type)
-
-    def fit(self, build_state_space: bool = False):
-        """
-        Method to fit the Deep Dynamic Factor Model.
-        Returns:
-            None, it updates the class attributes.
-        """
-        self.build_model()
-        self.pre_train()
-        self.train()
-        if build_state_space:
-            self.build_state_space()
-            # get filtered factors
-            self.latents["filtered"], self.latents["sigma_filtered"] = self.state_space.filter(self.data.values)
-            self.latents["smoothed"], self.latents["sigma_smoothed"] = self.state_space.smooth(self.data.values)
-            self.factors_filtered = self.latents["filtered"][:, 1:self.structure_encoder[-1] + 1]
-            self.factors_smoothed = self.latents["smoothed"][:, 1:self.structure_encoder[-1] + 1]
-
-    def predict(self, x_hat_start: np.ndarray, sigma_x_hat_start: np.ndarray, steps_ahead: int = 1) -> dict:
-        """
-        Method to carry out the prediction in state-space.
-        Args:
-            x_hat_start: starting values for the state mean
-            sigma_x_hat_start: starting values for the state variance covariance matrix
-            steps_ahead: number of steps ahead
-
-        Returns:
-            A dictionary with predicted states and measurement mean and variances.
-        """
-        return self.state_space.predict(x_hat_start, sigma_x_hat_start, steps_ahead=steps_ahead)
+    def _numpy_to_df_mean_and_cov(self, mean, cov, steps_ahead):
+        df_mean = pd.DataFrame(mean, index=range(steps_ahead + 1), columns=self.variable_order)
+        index = pd.MultiIndex.from_product([range(steps_ahead + 1), self.variable_order],
+                                           names=["Horizon", "Variable"])
+        df_cov = pd.DataFrame(cov.reshape(steps_ahead * mean.shape[1]), index=index, columns=self.variable_order)
+        return df_mean, df_cov
 
 
 if __name__ == "__main__":
@@ -359,6 +338,8 @@ if __name__ == "__main__":
     import random
     from timeit import default_timer as timer
     from datetime import timedelta
+    import logging
+    logging.basicConfig(level=logging.INFO)
 
     random.seed(0)
     np.random.seed(0)
@@ -388,14 +369,14 @@ if __name__ == "__main__":
     # fit models
     n_lags = 0
     start = timer()
-    ddfm = DDFM(pd.DataFrame(x), lags_input=n_lags,
+    ddfm = DDFM(lags_input=n_lags,
                 structure_encoder=(f.shape[1] * 6, f.shape[1] * 3, f.shape[1]),
                 max_iter=100)
-    ddfm.fit()
+    ddfm.fit(pd.DataFrame(x))
     stop = timer()
     print('Elapsed time: ', timedelta(seconds=stop - start))
     # evaluate (Stock and Watson (2002a) and Doz, Giannone, and Reichlin (2006) and use the trace R2)
-    f_hat = np.mean(ddfm.factors, axis=0)
+    f_hat = np.mean(ddfm.factors_ae, axis=0)
     precision_score = np.trace(
         f[n_lags:].T @ f_hat @ np.linalg.pinv(f_hat.T @ f_hat) @ f_hat.T @ f[n_lags:]) / np.trace(
         f[n_lags:].T @ f[n_lags:])
