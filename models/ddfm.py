@@ -20,7 +20,7 @@ class DDFM:
     """
 
     def __init__(self, lags_input: int = 0, structure_encoder: tuple = (16, 4),
-                 structure_decoder: tuple = None, use_bias: bool = True, factor_oder: int = 2, seed: int = 3,
+                 structure_decoder: tuple = None, use_bias: bool = True, factor_order: int = 2, seed: int = 3,
                  batch_norm: bool = True, link: str = 'relu', learning_rate: float = 0.005,
                  optimizer: str = 'Adam', decay_learning_rate: bool = True,
                  epochs: int = 100, batch_size: int = 250, max_iter: int = 200, tolerance: float = 0.0005,
@@ -34,7 +34,7 @@ class DDFM:
             structure_decoder: number of layers and neurons for the decoder (default is None, i.e. asymmetric
                 autoencoder with one single decoder linear layer)
             use_bias: whether to use bias term in the last decoder layer
-            factor_oder: number of lags in the transition equation for the dynamics of the common factors
+            factor_order: number of lags in the transition equation for the dynamics of the common factors
             seed: seed to control randomness for replicability
             batch_norm: whether to add batch norm layers into the encoder
             link: the type of link/activation function
@@ -49,8 +49,8 @@ class DDFM:
 
         """
         # common factors
-        self.factor_oder = factor_oder
-        if factor_oder not in [1, 2]:
+        self.factor_oder = factor_order
+        if factor_order not in [1, 2]:
             raise ValueError('factor_oder must be 1 or 2')
         self.lags_input = lags_input
         # autoencoder structure
@@ -60,9 +60,9 @@ class DDFM:
         self.batch_norm = batch_norm
         self.link = link
         if self.structure_decoder is None:
-            self.filter_type = "KalmanFilter"
+            self._filter_type = "KalmanFilter"
         else:
-            self.filter_type = "ToBeDefined"
+            self._filter_type = "ToBeDefined"
         # seed setting
         self.rng = np.random.RandomState(seed)
         self.initializer = tf.keras.initializers.GlorotNormal(seed=seed)
@@ -179,7 +179,7 @@ class DDFM:
         return StateSpace(transition, measurement,
                           mean_y=self.mean_data,
                           sigma_y=self.sigma_data,
-                          filter_type=self.filter_type)
+                          filter_type=self._filter_type)
 
     def _training_data_set_up(self, data: pd.DataFrame):
         data.sort_index(inplace=True)
@@ -237,22 +237,16 @@ class DDFM:
         self._data_tmp = get_data_with_lags(interpolate=interpolate, data_raw=self._data_mod, lags_input=self.lags_input)
 
     def _pre_train(self, min_obs: int = 50, mult_epoch_pre: int = 1) -> None:
-        """
-        Carry out pre-training of the model.
-        """
         # build inputs without interpolation
         self._build_inputs(interpolate=False)
         # check number of observations, and if not enough then interpolate
-        if len(self._data_tmp.dropna()) >= min_obs:
+        if self._data_tmp.dropna().shape[0] >= min_obs:
             inpt_pre_train = self._data_tmp.dropna().values
-            self.autoencoder.compile(optimizer=self.optimizer, loss='mse')
         else:
             self._build_inputs()
             inpt_pre_train = self._data_tmp.dropna().values
-            self.autoencoder.compile(optimizer=self.optimizer, loss=mse_missing)
-        # get target
+        self.autoencoder.compile(optimizer=self.optimizer, loss="mse")
         oupt_pre_train = self._data_tmp.dropna()[self.variable_order].values
-        # fit (pre-train) autoencoder
         self.autoencoder.fit(inpt_pre_train, oupt_pre_train, epochs=self.epoch * mult_epoch_pre,
                              batch_size=self.batch_size,
                              verbose=0)
@@ -261,13 +255,13 @@ class DDFM:
         """
         Algorithm 1 of the paper.
         """
-        # re-compile the autoencoder to re-init the optimizer and possibly change the objective
+        # re-compile the autoencoder to re-init the optimizer and change the objective
         self.autoencoder.compile(optimizer=self.optimizer, loss=mse_missing)
         # construct initial input data
         self._build_inputs()
         # make prediction
         prediction_iter = self.autoencoder.predict(self._data_tmp.values)
-        # update missings
+        # update missing
         self._data_mod_only_miss.values[self.lags_input:][self._bool_miss] = prediction_iter[self._bool_miss]
         # idiosyncratic term
         self.eps = self._data_tmp[self.variable_order].values - prediction_iter

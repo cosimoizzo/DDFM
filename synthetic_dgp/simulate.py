@@ -113,10 +113,3 @@ class SIMULATE(object):
         precision_score = np.trace(f_true.T @ f_hat @ np.linalg.pinv(f_hat.T @ f_hat) @ f_hat.T @ f_true) / np.trace(
             f_true.T @ f_true)
         return precision_score
-
-
-if __name__ == "__main__":
-    SIM = SIMULATE(seed=1)
-    x = SIM.simulate(100)
-    print(x.shape)
-    print(SIM.f.shape)

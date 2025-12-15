@@ -129,7 +129,7 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
         structure_encoder = (r_hat * 6, r_hat * 4, r_hat * 2, r_hat)
     else:
         structure_encoder = (r_hat,)
-    deep_dyn_fact_mdl = DDFM(pd.DataFrame(x), seed=seed, structure_encoder=structure_encoder, factor_oder=1,
+    deep_dyn_fact_mdl = DDFM(pd.DataFrame(x), seed=seed, structure_encoder=structure_encoder, factor_order=1,
                              use_bias=False, link='relu')
     deep_dyn_fact_mdl.fit(build_state_space=False)
     results_ddfm[0] = sim.evaluate(np.mean(deep_dyn_fact_mdl.factors_ae, axis=0), f_true=sim.f)
@@ -138,7 +138,7 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
     if poly_degree > 1:
         # using same encoder structure of the symmetric autoencoder below
         structure_encoder = (r_hat, r * 9, r * 3, r)
-        deep_dyn_fact_mdl = DDFM(pd.DataFrame(x), seed=seed, structure_encoder=structure_encoder, factor_oder=1,
+        deep_dyn_fact_mdl = DDFM(pd.DataFrame(x), seed=seed, structure_encoder=structure_encoder, factor_order=1,
                                  use_bias=False, link='relu')
         deep_dyn_fact_mdl.fit(build_state_space=False)
         results_ddfm[1] = sim.evaluate(np.mean(deep_dyn_fact_mdl.factors_ae, axis=0), f_true=sim.f)
@@ -151,7 +151,7 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
     for j_seed in range(nnlin_decoder_ddfm_runs):
         deep_dyn_fact_mdl_nnlin = DDFM(pd.DataFrame(x), seed=seed + j_seed,
                                        structure_encoder=structure_encoder_nnlin,
-                                       factor_oder=1,
+                                       factor_order=1,
                                        structure_decoder=structure_decoder_nnlin,
                                        use_bias=False, link='relu')
         deep_dyn_fact_mdl_nnlin.fit(build_state_space=False)
@@ -219,7 +219,7 @@ def compute_elapsed_time(n_obs: list, n_vars: list, seed: int, n_sims: int = 30)
                 time_dfm[j] = end_time - start_time
                 # compute time DDFM
                 start_time = time.time()
-                deep_dyn_fact_mdl = DDFM(pd.DataFrame(x), seed=seed, structure_encoder=structure_encoder, factor_oder=1,
+                deep_dyn_fact_mdl = DDFM(pd.DataFrame(x), seed=seed, structure_encoder=structure_encoder, factor_order=1,
                                          use_bias=False, link='relu')
                 deep_dyn_fact_mdl.fit()
                 end_time = time.time()

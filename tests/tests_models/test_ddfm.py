@@ -16,7 +16,7 @@ class TestDDFM(unittest.TestCase):
         cls.x = cls.sim.simulate(150, portion_missings=0.2)
         r_f_and_nnlinf = cls.sim.f.shape[1]
         structure_encoder = (r_f_and_nnlinf * 6, r_f_and_nnlinf * 4, r_f_and_nnlinf * 2, r_f_and_nnlinf)
-        cls.ddfm = DDFM(structure_encoder=structure_encoder, factor_oder=1,
+        cls.ddfm = DDFM(structure_encoder=structure_encoder, factor_order=1,
                         use_bias=False, link='relu', max_iter=1000)
         cls.ddfm.fit(pd.DataFrame(cls.x), build_state_space=True)
 
