@@ -169,7 +169,7 @@ class DDFM:
         bs, H = convert_decoder_to_numpy(self.decoder, self.use_bias, self.factor_oder,
                                          structure_decoder=self.structure_decoder)
         # get transition equation params
-        F, Q, mu_0, sigma_0, x_t = get_transition_params(f_t, eps_t, factor_oder=self.factor_oder,
+        F, Q, mu_0, sigma_0, x_t = get_transition_params(f_t, eps_t, factor_order=self.factor_oder,
                                                          bool_no_miss=self._bool_no_miss)
         self._latents["ae_states"] = x_t
         R = np.eye(eps_t.shape[1]) * 1e-15
