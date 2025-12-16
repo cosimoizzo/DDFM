@@ -1,15 +1,6 @@
-# This function simulate the DGP, estimates the models, return the performances over n simulations
-import copy
 import time
 import pandas as pd
 import numpy as np
-
-# import os, sys, inspect
-#
-# current_dir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
-# parent_dir = os.path.dirname(current_dir)
-# sys.path.insert(0, parent_dir)
-# sys.path.insert(0, parent_dir + '/code')
 
 from synthetic_dgp.simulate import SIMULATE
 from statsmodels.tsa.statespace.dynamic_factor_mq import DynamicFactorMQ as DFM
@@ -22,11 +13,11 @@ warnings.filterwarnings("ignore")
 
 def run_sims(this_comb: tuple, n_mc_sim: int = 100) -> None:
     """
-    Method to make a call to simulate a factor model, estimate and evaluate a DFM and a DDFM.
+    Simulate n_mc_sim factor models, estimate and evaluate DFMs and DDFMs on them.
     Args:
         this_comb: configuration of the DGP for the factor model
         n_mc_sim: number of simulations (for each simulation, a new DGP is generated together with its data and on it a
-            DFM and a DDFM are simulated and estimated)
+            DFM and a DDFM are estimated and evaluated)
 
     Returns:
         None, it prints the results to a csv file with the name of the configuration taken from "this_comb".
@@ -68,10 +59,10 @@ def run_sims(this_comb: tuple, n_mc_sim: int = 100) -> None:
                                          results_dfm_reduced_code_size,
                                          results_ddfm,
                                          results_ddfm_nnlin)),
-                              columns=['dfm smoothed', 'dfm filtered',
-                                       'dfm code reduced size', 'dfm code reduced size vs linear f',
-                                       'ddfm code', 'ddfm code reduced size', 'ddfm code reduced size vs linear f',
-                                       'ddfm nnlin last neurons', 'ddfm nnlin code', 'ddfm nnlin code vs linear f',
+                              columns=['dfm smoothed', 'dfm filtered', 'dfm elapsed time',
+                                       'dfm code reduced size', 'dfm code reduced size vs linear f', 'dfm code reduced size elapsed time',
+                                       'ddfm code', 'ddfm code reduced size', 'ddfm code reduced size vs linear f', 'ddfm elapsed time',
+                                       'ddfm nnlin last neurons', 'ddfm nnlin code', 'ddfm nnlin code vs linear f', 'ddfm nnlin elapsed time'
                                        ])
     df_results.to_csv(dir_name_file)
 
@@ -80,7 +71,7 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
                    sign_features: int = 0, n_obs: int = 50, rho: float = 0.7, alpha: float = 0.2, u: float = 0.1,
                    tau: float = 0, nnlin_decoder_ddfm_runs: int = 5) -> dict:
     """
-    Method to simulate a factor model, estimate and evaluate a DFM and a DDFM.
+    Simulate a single factor model, estimate and evaluate DFMs and DDFMs on it.
     Args:
         seed: seed setting for replicability
         n: number of observable components
@@ -97,14 +88,12 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
             of training loss
 
     Returns:
-        a dictionary with the evaluation scores of the DFM and the DDFM smoothed/non-filtered and filtered.
+        a dictionary with the evaluation scores of the DFMs and the DDFMs.
     """
-    # random.seed(seed)
-    # np.random.seed(seed)
-    results_dfm = np.zeros(2)
-    results_dfm_reduced_code_size = np.zeros(2)
-    results_ddfm = np.zeros(3)
-    results_ddfm_nnlin = np.zeros(3)
+    results_dfm = np.zeros(3)
+    results_dfm_reduced_code_size = np.zeros(3)
+    results_ddfm = np.zeros(4)
+    results_ddfm_nnlin = np.zeros(4)
 
     # simulate DGP
     sim = SIMULATE(seed=seed, n=n, r=r, poly_degree=poly_degree, sign_features=sign_features, rho=rho, alpha=alpha, u=u,
@@ -113,34 +102,43 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
     r_hat = sim.f.shape[1]
 
     # estimate dfm
+    start_time = time.time()
     dyn_fact_mdl = DFM(pd.DataFrame(x), factors=min(r_hat, x.shape[1]), factor_orders=1)
-    res_dyn_fact_mdl = dyn_fact_mdl.fit(disp=10)
+    res_dyn_fact_mdl = dyn_fact_mdl.fit(disp=100)
+    end_time = time.time()
     results_dfm[0] = sim.evaluate(res_dyn_fact_mdl.factors_ae.smoothed.values, f_true=sim.f)
     results_dfm[1] = sim.evaluate(res_dyn_fact_mdl.factors_ae.filtered.values, f_true=sim.f)
+    results_dfm[2] = end_time - start_time
 
     # estimate dfm with reduced code size (aka number of factors)
+    start_time = time.time()
     dyn_fact_mdl = DFM(pd.DataFrame(x), factors=min(r, x.shape[1]), factor_orders=1)
-    res_dyn_fact_mdl = dyn_fact_mdl.fit(disp=10)
+    res_dyn_fact_mdl = dyn_fact_mdl.fit(disp=100)
+    end_time = time.time()
     results_dfm_reduced_code_size[0] = sim.evaluate(res_dyn_fact_mdl.factors_ae.smoothed.values, f_true=sim.f)
     results_dfm_reduced_code_size[1] = sim.evaluate(res_dyn_fact_mdl.factors_ae.smoothed.values, f_true=sim.linear_f)
+    results_dfm_reduced_code_size[2] = end_time - start_time
 
     # estimate ddfm with linear decoder
     if poly_degree > 1:
         structure_encoder = (r_hat * 6, r_hat * 4, r_hat * 2, r_hat)
     else:
         structure_encoder = (r_hat,)
-    deep_dyn_fact_mdl = DDFM(pd.DataFrame(x), seed=seed, structure_encoder=structure_encoder, factor_order=1,
-                             use_bias=False, link='relu')
-    deep_dyn_fact_mdl.fit(build_state_space=False)
+    start_time = time.time()
+    deep_dyn_fact_mdl = DDFM(seed=seed, structure_encoder=structure_encoder, factor_order=1,
+                             use_bias=False, link='relu', disp=100)
+    deep_dyn_fact_mdl.fit(pd.DataFrame(x), build_state_space=False)
+    end_time = time.time()
     results_ddfm[0] = sim.evaluate(np.mean(deep_dyn_fact_mdl.factors_ae, axis=0), f_true=sim.f)
+    results_ddfm[3] = end_time - start_time
     # estimate ddfm with linear decoder but reduced code size and compare against nonlinear and linear factors
     # (only if nonlin dgp)
     if poly_degree > 1:
         # using same encoder structure of the symmetric autoencoder below
         structure_encoder = (r_hat, r * 9, r * 3, r)
-        deep_dyn_fact_mdl = DDFM(pd.DataFrame(x), seed=seed, structure_encoder=structure_encoder, factor_order=1,
-                                 use_bias=False, link='relu')
-        deep_dyn_fact_mdl.fit(build_state_space=False)
+        deep_dyn_fact_mdl = DDFM(seed=seed, structure_encoder=structure_encoder, factor_order=1,
+                                 use_bias=False, link='relu', disp=100)
+        deep_dyn_fact_mdl.fit(pd.DataFrame(x), build_state_space=False)
         results_ddfm[1] = sim.evaluate(np.mean(deep_dyn_fact_mdl.factors_ae, axis=0), f_true=sim.f)
         results_ddfm[2] = sim.evaluate(np.mean(deep_dyn_fact_mdl.factors_ae, axis=0), f_true=sim.linear_f)
 
@@ -149,16 +147,19 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
     structure_decoder_nnlin = (r * 3, r * 9, r_hat)
     loss_now = None
     for j_seed in range(nnlin_decoder_ddfm_runs):
-        deep_dyn_fact_mdl_nnlin = DDFM(pd.DataFrame(x), seed=seed + j_seed,
+        start_time = time.time()
+        deep_dyn_fact_mdl_nnlin = DDFM(seed=seed + j_seed,
                                        structure_encoder=structure_encoder_nnlin,
                                        factor_order=1,
                                        structure_decoder=structure_decoder_nnlin,
                                        use_bias=False, link='relu')
-        deep_dyn_fact_mdl_nnlin.fit(build_state_space=False)
+        deep_dyn_fact_mdl_nnlin.fit(pd.DataFrame(x), build_state_space=False)
+        end_time = time.time()
         if loss_now is None or loss_now > deep_dyn_fact_mdl_nnlin.loss_now:
             loss_now = deep_dyn_fact_mdl_nnlin.loss_now
             last_neurons = np.mean(deep_dyn_fact_mdl_nnlin.last_neurons, axis=0)
             factors = np.mean(deep_dyn_fact_mdl_nnlin.factors_ae, axis=0)
+            results_ddfm_nnlin[3] = end_time - start_time
     results_ddfm_nnlin[0] = sim.evaluate(last_neurons, f_true=sim.f)
     results_ddfm_nnlin[1] = sim.evaluate(factors, f_true=sim.f)
     results_ddfm_nnlin[2] = sim.evaluate(factors, f_true=sim.linear_f)
@@ -170,68 +171,3 @@ def run_single_sim(seed: int, n: int = 10, portion_missings: float = 0, r: int =
            "results_ddfm_nnlin": results_ddfm_nnlin,
            }
     return out
-
-
-def compute_elapsed_time(n_obs: list, n_vars: list, seed: int, n_sims: int = 30) -> dict:
-    """
-    Simulate a polynomial of order 2 DGP with 3 factors. Then estimate it with DFM and DDFM. Calculate statistics of the
-    elapsed time.
-    Args:
-        n_obs: number of observations from a given DGP
-        n_vars: number of variables from a given DGP
-        seed: seed setting for replicability
-        n_sims: number of simulations (each simulation correspond to a potentially different DGP)
-
-    Returns:
-        a dictionary with the following statistics about the time taken to init the object and estimate the model:
-            - average_time_dfm
-            - std_time_dfm
-            - average_time_ddfm
-            - std_time_ddfm
-    """
-    # # set seed
-    # random.seed(seed)
-    # np.random.seed(seed)
-    # part fo the conf for DGP
-    r = 3
-    portion_missings = 0.2
-    # init results collector
-    average_time_dfm = np.zeros((len(n_vars), len(n_obs)))
-    std_time_dfm = np.zeros_like(average_time_dfm)
-    average_time_ddfm = np.zeros_like(average_time_dfm)
-    std_time_ddfm = np.zeros_like(average_time_dfm)
-    # loop
-    for c_vars, v_vars in enumerate(n_vars):
-        sim = SIMULATE(seed=seed, n=v_vars, r=r, poly_degree=2)
-        for c_obs, v_obs in enumerate(n_obs):
-            x = sim.simulate(v_obs, portion_missings=portion_missings)
-            r_true = sim.f.shape[1]
-            structure_encoder = (r_true * 6, r_true * 4, r_true * 2, r_true)
-            # init arrays
-            time_dfm = np.zeros(n_sims)
-            time_ddfm = np.zeros(n_sims)
-            for j in range(n_sims):
-                # compute time DFM
-                start_time = time.time()
-                dyn_fact_mdl = DFM(pd.DataFrame(x), factors=min(r_true, x.shape[1]), factor_orders=1)
-                dyn_fact_mdl.fit(disp=1000)
-                end_time = time.time()
-                time_dfm[j] = end_time - start_time
-                # compute time DDFM
-                start_time = time.time()
-                deep_dyn_fact_mdl = DDFM(pd.DataFrame(x), seed=seed, structure_encoder=structure_encoder, factor_order=1,
-                                         use_bias=False, link='relu')
-                deep_dyn_fact_mdl.fit()
-                end_time = time.time()
-                time_ddfm[j] = end_time - start_time
-            # compute statistics
-            average_time_dfm[c_vars, c_obs] = np.average(time_dfm)
-            std_time_dfm[c_vars, c_obs] = np.std(time_dfm)
-            average_time_ddfm[c_vars, c_obs] = np.average(time_ddfm)
-            std_time_ddfm[c_vars, c_obs] = np.std(time_ddfm)
-    # put results into a dictionary
-    results = {"average_time_dfm": average_time_dfm,
-               "std_time_dfm": std_time_dfm,
-               "average_time_ddfm": average_time_ddfm,
-               "std_time_ddfm": std_time_ddfm}
-    return results
