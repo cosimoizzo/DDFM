@@ -49,9 +49,9 @@ class DDFM:
 
         """
         # common factors
-        self.factor_oder = factor_order
+        self.factor_order = factor_order
         if factor_order not in [1, 2]:
-            raise ValueError('factor_oder must be 1 or 2')
+            raise ValueError('factor_order must be 1 or 2')
         self.lags_input = lags_input
         # autoencoder structure
         self.structure_encoder = structure_encoder
@@ -166,10 +166,10 @@ class DDFM:
         # idio components
         eps_t = self.eps
         # get params from decoder (measurement equation)
-        bs, H = convert_decoder_to_numpy(self.decoder, self.use_bias, self.factor_oder,
+        bs, H = convert_decoder_to_numpy(self.decoder, self.use_bias, self.factor_order,
                                          structure_decoder=self.structure_decoder)
         # get transition equation params
-        F, Q, mu_0, sigma_0, x_t = get_transition_params(f_t, eps_t, factor_order=self.factor_oder,
+        F, Q, mu_0, sigma_0, x_t = get_transition_params(f_t, eps_t, factor_order=self.factor_order,
                                                          bool_no_miss=self._bool_no_miss)
         self._latents["ae_states"] = x_t
         R = np.eye(eps_t.shape[1]) * 1e-15
@@ -265,11 +265,11 @@ class DDFM:
         self._data_mod_only_miss.values[self.lags_input:][self._bool_miss] = prediction_iter[self._bool_miss]
         # idiosyncratic term
         self.eps = self._data_tmp[self.variable_order].values - prediction_iter
-        self._i_iter = 0
+        self.i_iter = 0
         not_converged = True
         T, D = self._data_tmp.shape[0], self.data.shape[1]
         # start MCMC
-        while not_converged and self._i_iter < self.max_iter:
+        while not_converged and self.i_iter < self.max_iter:
             # get idio distribution
             phi, mu_eps, std_eps = get_idio(self.eps, self._bool_no_miss)
             # subtract conditional AR-idio mean from x
@@ -279,36 +279,35 @@ class DDFM:
             # gen data_tmp from data_mod
             self._build_inputs(interpolate=False)
             # gen MC samples for idio (dims = Sim x T * D)
-            eps_draws = self.rng.multivariate_normal(mu_eps, np.diag(std_eps), self.epoch * T)
+            eps_draws = self.rng.multivariate_normal(mu_eps, np.diag(std_eps ** 2), self.epoch * T)
             x_sim_noisy = np.concatenate([self._data_tmp.copy()] * self.epoch, axis=0)
             x_sim_noisy[:, :D] -= eps_draws
             for e in range(self.epoch):
+                x_sim = x_sim_noisy[e*T:(e+1)*T]
                 for i in range(0, T, self.batch_size):
-                    x_sim = x_sim_noisy[e*T:(e+1)*T]
                     self.autoencoder.train_on_batch(x_sim[i:i+self.batch_size], self._target[i:i+self.batch_size])
             # update factors: average over all predictions from the MC samples
-            factors_ae_sims = self.encoder(x_sim_noisy).numpy()
-            self.factors_ae = factors_ae_sims.reshape(self.epoch, T, -1)
+            factors_ae_sims = self.encoder(x_sim_noisy)
             # check convergence
-            decoded_sims = self.decoder(factors_ae_sims).numpy().reshape(self.epoch, T, D)
-            prediction_iter = np.mean(decoded_sims, axis=0)
-            if self._i_iter > 1:
+            prediction_iter = tf.reduce_mean(tf.reshape(self.decoder(factors_ae_sims), (self.epoch, T, D)), axis=0).numpy()
+            if self.i_iter > 1:
                 delta, self.loss_now = convergence_checker(prediction_prev_iter, prediction_iter, self._target)
-                if self._i_iter % self.disp == 0:
-                    self.logger.info(f'iteration: {self._i_iter} - new loss: {self.loss_now} - delta: {delta}')
+                if self.i_iter % self.disp == 0:
+                    self.logger.info(f'iteration: {self.i_iter} - new loss: {self.loss_now} - delta: {delta}')
                 if delta < self.tolerance:
                     not_converged = False
-                    self.logger.info(f'Convergence achieved in {self._i_iter} iterations - new loss: {self.loss_now} - delta: {delta} < {self.tolerance}')
+                    self.logger.info(f'Convergence achieved in {self.i_iter} iterations - new loss: {self.loss_now} - delta: {delta} < {self.tolerance}')
             # store previous prediction to monitor convergence
             prediction_prev_iter = prediction_iter.copy()
             # update missings
             self._data_mod_only_miss.values[self.lags_input:][self._bool_miss] = prediction_iter[self._bool_miss]
             # update idio
             self.eps = self._data_mod_only_miss.values[self.lags_input:] - prediction_iter
-            self._i_iter += 1
+            self.i_iter += 1
 
+        self.factors_ae = factors_ae_sims.numpy().reshape(self.epoch, T, -1)
         # get last neurons (making difference between nonlinear and linear decoder)
-        if self.structure_decoder is None:
+        if self.structure_decoder is None or len(self.decoder.layers) == 1:
             self.last_neurons = self.factors_ae
         else:
             decoder_for_last_neuron = keras.Model(self.decoder.input,
