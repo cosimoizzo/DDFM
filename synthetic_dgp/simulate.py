@@ -5,10 +5,9 @@ from sklearn.preprocessing import PolynomialFeatures
 class SIMULATE(object):
     """
     Simulation based on the Monte Carlo exercise from
-    "Banbura, Marta and Modugno, Michele,
-    Maximum Likelihood Estimation of Factor Models on Data Sets with Arbitrary Pattern of Missing Data
-    (April 30, 2010). ECB Working Paper No. 1189,
-    Available at SSRN: https://ssrn.com/abstract=1598302"
+    "Banbura, Marta and Modugno, Michele, Maximum Likelihood Estimation of Factor Models on Data Sets with Arbitrary
+    Pattern of Missing Data (April 30, 2010). ECB Working Paper No. 1189, Available at
+    SSRN: https://ssrn.com/abstract=1598302"
     Augmented with polynomial and sign factors.
     """
 
@@ -18,10 +17,10 @@ class SIMULATE(object):
 
         Args:
             seed: seed setting for replicability
-            n: number of observable components
+            n: number of observable variables
             r: number of common factors
             poly_degree: polynomial degree (1 linear)
-            sign_features: whether to add features based on sign (the first "sign_features" features, if 0 than not)
+            sign_features: whether to add features based on sign (of the first "sign_features" features, if 0 than not)
             rho: parameter governing serial-correlation of the common factors
             alpha: parameter governing serial-correlation of the idiosyncratic components
             u: parameter governing the signal-to-noise ratio
@@ -42,7 +41,7 @@ class SIMULATE(object):
 
     def simulate(self, t_obs: int, portion_missings: float = 0.0) -> np.ndarray:
         """
-        Method to simulate data from the DGP defined by the class.
+        Simulate data.
         Args:
             t_obs: number of observations to simulate
             portion_missings: portion of missing data
@@ -55,10 +54,7 @@ class SIMULATE(object):
         A = np.diag(self.rho * np.ones(self.r))
         f = np.zeros_like(u_t)
         for t in range(t_obs):
-            if t > 0:
-                f[t, :] = f[t - 1, :] @ A + u_t[t, :]
-            else:
-                f[t, :] = u_t[t, :]
+            f[t, :] = f[t - 1, :] @ A + u_t[t, :]
         self.linear_f = f.copy()
         if self.poly_degree > 1:
             poly = PolynomialFeatures(self.poly_degree, include_bias=False)
@@ -80,10 +76,7 @@ class SIMULATE(object):
         D = np.diag(self.alpha * np.ones(self.n))
         eps = np.zeros_like(v_t)
         for t in range(t_obs):
-            if t > 0:
-                eps[t, :] = eps[t - 1, :] @ D + v_t[t, :]
-            else:
-                eps[t, :] = v_t[t, :]
+            eps[t, :] = eps[t - 1, :] @ D + v_t[t, :]
         # gen observables
         x = f @ Lambda.T + eps
         self.f = f
@@ -99,8 +92,8 @@ class SIMULATE(object):
 
     def evaluate(self, f_hat: np.ndarray, f_true: np.ndarray = None) -> float:
         """
-        Method to compute the trace R^2 between f_hat and f_true. If f_true is not provided then the factors stores as
-        attributes are used.
+        Compute the trace R^2 between f_hat and f_true. If f_true is not provided then the factors stored as
+        attributes from the simulate method are used.
         Args:
             f_hat: estimated factors
             f_true: true factors (if None, then "self.f" is used)
