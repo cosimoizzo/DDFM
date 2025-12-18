@@ -199,10 +199,10 @@ class DDFM:
         Build the keras model
         """
         # encoder
-        inputs_ = keras.Input(shape=(int((self.lags_input + 1) * self.data.shape[1]),))
+        inputs = keras.Input(shape=(int((self.lags_input + 1) * self.data.shape[1]),))
         if len(self.structure_encoder) > 1:
             encoded = layers.Dense(self.structure_encoder[0], activation=self.link,
-                                   bias_initializer='zeros', kernel_initializer=self.initializer)(inputs_)
+                                   bias_initializer='zeros', kernel_initializer=self.initializer)(inputs)
             for j in self.structure_encoder[1:]:
                 if self.batch_norm:
                     encoded = layers.BatchNormalization()(encoded)
@@ -211,9 +211,9 @@ class DDFM:
                                        bias_initializer='zeros')(encoded)
         else:
             encoded = layers.Dense(self.structure_encoder[0], bias_initializer='zeros',
-                                   kernel_initializer=self.initializer)(inputs_)
+                                   kernel_initializer=self.initializer)(inputs)
 
-        self.encoder = keras.Model(inputs_, encoded)
+        self.encoder = keras.Model(inputs, encoded)
         # decoder
         latent_inputs = keras.Input(shape=(self.structure_encoder[-1],))
         if self.structure_decoder:
@@ -223,15 +223,15 @@ class DDFM:
             for j in self.structure_decoder[1:]:
                 decoded = layers.Dense(j, activation=self.link, kernel_initializer=self.initializer,
                                        bias_initializer='zeros')(decoded)
-            output_ = layers.Dense(self.data.shape[1], bias_initializer='zeros',
+            output = layers.Dense(self.data.shape[1], bias_initializer='zeros',
                                    kernel_initializer=self.initializer, use_bias=self.use_bias)(decoded)
         else:
-            output_ = layers.Dense(self.data.shape[1], bias_initializer='zeros',
+            output = layers.Dense(self.data.shape[1], bias_initializer='zeros',
                                    kernel_initializer=self.initializer, use_bias=self.use_bias)(latent_inputs)
-        self.decoder = keras.Model(latent_inputs, output_)
-        outputs_ = self.decoder(self.encoder(inputs_))
+        self.decoder = keras.Model(latent_inputs, output)
+        outputs_ = self.decoder(self.encoder(inputs))
         # autoencoder
-        self.autoencoder = keras.Model(inputs_, outputs_)
+        self.autoencoder = keras.Model(inputs, outputs_)
 
     def _build_inputs(self, interpolate: bool = True) -> None:
         self._data_tmp = get_data_with_lags(interpolate=interpolate, data_raw=self._data_mod, lags_input=self.lags_input)
