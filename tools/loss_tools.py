@@ -8,6 +8,7 @@ def mse_missing(y_actual: tf.Tensor, y_predicted: tf.Tensor) -> tf.Tensor:
     """
     Custom loss (mse) for missing data.
     """
+    y_actual = tf.cast(y_actual, y_predicted.dtype)
     mask = tf.cast(~tf.math.is_nan(y_actual), y_predicted.dtype)
     y_actual = tf.where(mask > 0, y_actual, tf.zeros_like(y_actual))
     sq_error = tf.square(y_actual - y_predicted) * mask
@@ -16,7 +17,5 @@ def mse_missing(y_actual: tf.Tensor, y_predicted: tf.Tensor) -> tf.Tensor:
     )
 
 
-def convergence_checker(y_prev, y_now, y_actual):
-    loss_minus = mse(y_prev[~np.isnan(y_actual)], y_actual[~np.isnan(y_actual)])
-    loss = mse(y_now[~np.isnan(y_actual)], y_actual[~np.isnan(y_actual)])
-    return np.abs(loss - loss_minus) / loss_minus, loss
+def np_mse_missing(y_actual: np.ndarray, y_now: np.ndarray, mask: np.ndarray) -> float:
+    return mse(y_now[mask], y_actual[mask])

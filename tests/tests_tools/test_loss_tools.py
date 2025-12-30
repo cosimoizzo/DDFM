@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
 import tensorflow as tf
-from tools.loss_tools import mse_missing, convergence_checker
+from tools.loss_tools import mse_missing
 
 
 class TestLossTools(unittest.TestCase):
@@ -22,11 +22,6 @@ class TestLossTools(unittest.TestCase):
             np.sum(mse_missing(tf.convert_to_tensor(self.y_actual), tf.convert_to_tensor(self.y_predicted)).numpy()), 0)
         self.assertEqual(
             np.sum(mse_missing(tf.convert_to_tensor(self.y_actual), tf.convert_to_tensor(self.y_predicted)).numpy()), 0)
-
-    def test_convergence_checker(self):
-        dif, loss = convergence_checker(self.y_predicted + 0.001, self.y_predicted + 0.001, self.y_actual)
-        self.assertGreater(loss, 0)
-        self.assertEqual(dif, 0)
 
 
 if __name__ == '__main__':
