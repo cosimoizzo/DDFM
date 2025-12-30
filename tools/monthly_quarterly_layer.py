@@ -23,10 +23,9 @@ class MixedFreqMQLayer(keras.layers.Layer):
                           axis=1)
         self.w = self.add_weight(
             shape=(input_dim * 5, input_dim),
-            initializer=tf.constant_initializer(mm_mq.numpy()),
+            initializer=lambda shape, dtype: tf.cast(mm_mq, dtype),
             trainable=False
         )
-        self.b = self.add_weight(shape=(input_dim,), initializer="zeros", trainable=False)
 
     def call(self, inputs):
         return custom_op(inputs, self.w)
@@ -39,27 +38,21 @@ def custom_op(x, weights):
 
     def custom_grad(upstream):
         inputs_gradient = tf.matmul(get_input(upstream), weights)
-        weights_gradient = tf.matmul(tf.transpose(get_input(x)), get_input(upstream))
-        return inputs_gradient, weights_gradient
+        # weights_gradient = tf.matmul(tf.transpose(get_input(x)), get_input(upstream))
+        return inputs_gradient, None #weights_gradient
 
     return result, custom_grad
 
 
 @tf.function
 def get_input(inputs):
-    inputs_and_lags = tf.concat([inputs,
-                                 tf.multiply(tf.roll(inputs, shift=1, axis=0, name=None), tf.concat(
-                                     [tf.zeros((1, inputs.shape[1])),
-                                      tf.ones((inputs.shape[0] - 1, inputs.shape[1]))], axis=0)),
-                                 tf.multiply(tf.roll(inputs, shift=2, axis=0, name=None), tf.concat(
-                                     [tf.zeros((2, inputs.shape[1])),
-                                      tf.ones((inputs.shape[0] - 2, inputs.shape[1]))], axis=0)),
-                                 tf.multiply(tf.roll(inputs, shift=3, axis=0, name=None), tf.concat(
-                                     [tf.zeros((3, inputs.shape[1])),
-                                      tf.ones((inputs.shape[0] - 3, inputs.shape[1]))], axis=0)),
-                                 tf.multiply(tf.roll(inputs, shift=4, axis=0, name=None), tf.concat(
-                                     [tf.zeros((4, inputs.shape[1])),
-                                      tf.ones((inputs.shape[0] - 4, inputs.shape[1]))], axis=0)),
-                                 ],
-                                axis=1)
-    return inputs_and_lags
+    num_lags = 5
+    lags = [inputs]
+    for lag in range(1, num_lags):
+        rolled = tf.roll(inputs, shift=lag, axis=0)
+        mask = tf.concat([
+            tf.zeros((lag, tf.shape(inputs)[1]), dtype=inputs.dtype),
+            tf.ones((tf.shape(inputs)[0] - lag, tf.shape(inputs)[1]), dtype=inputs.dtype)
+        ], axis=0)
+        lags.append(rolled * mask)
+    return tf.concat(lags, axis=1)
