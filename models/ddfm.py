@@ -35,7 +35,7 @@ class DDFM:
             lags_input: number of lags of the inputs on the encoder (default is 0, i.e. same inputs and outputs)
             structure_encoder: number of layers and neurons for the encoder
             structure_decoder: number of layers and neurons for the decoder (default is None, i.e. asymmetric
-                autoencoder with one single decoder linear layer)
+                autoencoder with one single linear layer decoder)
             use_bias: whether to use bias term in the last decoder layer
             factor_order: number of lags in the transition equation for the dynamics of the common factors
             jointly_est_var: whether to estimate jointly the var dynamics of the latent factors
@@ -45,11 +45,11 @@ class DDFM:
             learning_rate: the learning rate for the optimizer
             optimizer: the selected optimizer
             decay_learning_rate: whether to use a decaying learning rate
-            epochs: number of epochs between MCMC iterations
+            epochs: number of epochs between iterations
             batch_size: the size of the batch
-            max_iter: maximum number of iterations for the MCMC
+            max_iter: maximum number of iterations
             tolerance: the tolerance to stop iterations
-            disp: display intermediate results every "disp" iterations of MCMC
+            disp: display intermediate results every "disp" iterations
 
         """
         # common factors
@@ -206,10 +206,11 @@ class DDFM:
         if len(self.structure_encoder) > 1:
             encoded = layers.Dense(self.structure_encoder[0], activation=self.link,
                                    bias_initializer='zeros', kernel_initializer=self.initializer)(inputs)
-            for j in self.structure_encoder[1:]:
+            for c,j in enumerate(self.structure_encoder[1:]):
                 if self.batch_norm:
                     encoded = layers.BatchNormalization()(encoded)
-                encoded = layers.Dense(j, activation=self.link,
+                encoded = layers.Dense(j,
+                                       activation=self.link if self.structure_decoder is None or c != len(self.structure_encoder) - 2 else None,
                                        kernel_initializer=self.initializer,
                                        bias_initializer='zeros')(encoded)
         else:
@@ -274,7 +275,7 @@ class DDFM:
         self._data_mod_only_miss.values[self.lags_input:][self._bool_miss] = prediction_iter[self._bool_miss]
         # idiosyncratic term
         self.eps = self._data_tmp[self.variable_order].values - prediction_iter
-        # start MCMC
+        # start MCMC iterations
         self.i_iter = 0
         not_converged = True
         T, D = self._data_tmp.shape[0], self.data.shape[1]
