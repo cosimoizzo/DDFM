@@ -1,5 +1,5 @@
 import logging
-from typing import Tuple, Union
+from typing import Tuple
 
 import numpy as np
 import pandas as pd
@@ -8,7 +8,8 @@ from tensorflow import keras
 from tensorflow.keras import layers
 
 from models.state_space import StateSpace
-from tools.loss_tools import mse_missing, convergence_checker
+from models.vector_autoregressive import VARLayerClosedForm, VARAutoencoder
+from tools.loss_tools import mse_missing, np_mse_missing
 from tools.getters_converters_tools import convert_decoder_to_numpy, get_transition_params, get_idio, get_data_with_lags
 
 # tf.config.run_functions_eagerly(True)
@@ -20,10 +21,12 @@ class DDFM:
     """
 
     def __init__(self, lags_input: int = 0, structure_encoder: tuple = (16, 4),
-                 structure_decoder: tuple = None, use_bias: bool = True, factor_order: int = 2, seed: int = 3,
+                 structure_decoder: tuple = None, use_bias: bool = True, factor_order: int = 2,
+                 jointly_est_var: bool = False,
+                 seed: int = 3,
                  batch_norm: bool = True, link: str = 'relu', learning_rate: float = 0.005,
                  optimizer: str = 'Adam', decay_learning_rate: bool = True,
-                 epochs: int = 100, batch_size: int = 250, max_iter: int = 200, tolerance: float = 0.0005,
+                 epochs: int = 150, batch_size: int = 250, max_iter: int = 200, tolerance: float = 0.0005,
                  disp: int = 10,
                  logger = logging.getLogger('DDFM')):
         """
@@ -35,6 +38,7 @@ class DDFM:
                 autoencoder with one single decoder linear layer)
             use_bias: whether to use bias term in the last decoder layer
             factor_order: number of lags in the transition equation for the dynamics of the common factors
+            jointly_est_var: whether to estimate jointly the var dynamics of the latent factors
             seed: seed to control randomness for replicability
             batch_norm: whether to add batch norm layers into the encoder
             link: the type of link/activation function
@@ -52,6 +56,7 @@ class DDFM:
         self.factor_order = factor_order
         if factor_order not in [1, 2]:
             raise ValueError('factor_order must be 1 or 2')
+        self.jointly_est_var = jointly_est_var
         self.lags_input = lags_input
         # autoencoder structure
         self.structure_encoder = structure_encoder
@@ -181,7 +186,7 @@ class DDFM:
                           sigma_y=self.sigma_data,
                           filter_type=self._filter_type)
 
-    def _training_data_set_up(self, data: pd.DataFrame):
+    def _training_data_set_up(self, data: pd.DataFrame) -> None:
         data.sort_index(inplace=True)
         self.variable_order = data.columns
         self.mean_data = data.mean().values
@@ -193,11 +198,9 @@ class DDFM:
         # create two copies of the original data which will be modified during training
         self._data_mod_only_miss, self._data_mod = self.data.copy(), self.data.copy()
         self._target = self.data[self.lags_input:].values
+        self._target_tf = tf.convert_to_tensor(self._target, dtype=tf.float32)
 
     def _build_model(self) -> None:
-        """
-        Build the keras model
-        """
         # encoder
         inputs = keras.Input(shape=(int((self.lags_input + 1) * self.data.shape[1]),))
         if len(self.structure_encoder) > 1:
@@ -232,6 +235,9 @@ class DDFM:
         outputs_ = self.decoder(self.encoder(inputs))
         # autoencoder
         self.autoencoder = keras.Model(inputs, outputs_)
+        if self.jointly_est_var:
+            self.var_layer = VARLayerClosedForm(n_vars=self.structure_encoder[-1], var_order=self.factor_order)
+            self.var_autoencoder = VARAutoencoder(self.encoder, self.var_layer, self.decoder, ae_loss=mse_missing)
 
     def _build_inputs(self, interpolate: bool = True) -> None:
         self._data_tmp = get_data_with_lags(interpolate=interpolate, data_raw=self._data_mod, lags_input=self.lags_input)
@@ -255,20 +261,24 @@ class DDFM:
         """
         Algorithm 1 of the paper.
         """
-        # re-compile the autoencoder to re-init the optimizer and change the objective
+        # re-compile the autoencoder to re-init the optimizer
         self.autoencoder.compile(optimizer=self.optimizer, loss=mse_missing)
         # construct initial input data
         self._build_inputs()
-        # make prediction
+        # if jointly estimate var
+        if self.jointly_est_var:
+            factors = self.encoder.predict(self._data_tmp.values)
+            self.var_layer.update_weights_closed_form(factors)
         prediction_iter = self.autoencoder.predict(self._data_tmp.values)
         # update missing
         self._data_mod_only_miss.values[self.lags_input:][self._bool_miss] = prediction_iter[self._bool_miss]
         # idiosyncratic term
         self.eps = self._data_tmp[self.variable_order].values - prediction_iter
+        # start MCMC
         self.i_iter = 0
         not_converged = True
         T, D = self._data_tmp.shape[0], self.data.shape[1]
-        # start MCMC
+        fit_method = self._fit_method_var_ae(T) if self.jointly_est_var else self._fit_method_ae(T)
         while not_converged and self.i_iter < self.max_iter:
             # get idio distribution
             phi, mu_eps, std_eps = get_idio(self.eps, self._bool_no_miss)
@@ -282,27 +292,32 @@ class DDFM:
             eps_draws = self.rng.multivariate_normal(mu_eps, np.diag(std_eps ** 2), self.epoch * T)
             x_sim_noisy = np.concatenate([self._data_tmp.copy()] * self.epoch, axis=0)
             x_sim_noisy[:, :D] -= eps_draws
-            for e in range(self.epoch):
-                x_sim = x_sim_noisy[e*T:(e+1)*T]
-                for i in range(0, T, self.batch_size):
-                    self.autoencoder.train_on_batch(x_sim[i:i+self.batch_size], self._target[i:i+self.batch_size])
+            x_sim_noisy = tf.convert_to_tensor(x_sim_noisy, dtype=tf.float32)
+            fit_method(x_sim_noisy)
             # update factors: average over all predictions from the MC samples
             factors_ae_sims = self.encoder(x_sim_noisy)
-            # check convergence
             prediction_iter = tf.reduce_mean(tf.reshape(self.decoder(factors_ae_sims), (self.epoch, T, D)), axis=0).numpy()
+            if self.jointly_est_var:
+                z_latent = tf.reduce_mean(tf.reshape(factors_ae_sims, (self.epoch, T, self.var_layer.n_vars)), axis=0)
+                self.var_layer.update_weights_closed_form(z_latent)
+                z_pred = self.var_layer(z_latent)
+                var_loss = self.var_autoencoder.var_loss_weight * self.var_autoencoder.var_loss(z_latent[self.factor_order:], z_pred[self.factor_order:])
+            else:
+                var_loss = 0
+            self.loss_now = np_mse_missing(self._target, prediction_iter, self._bool_no_miss) + var_loss
+            # check convergence
             if self.i_iter > 1:
-                delta, self.loss_now = convergence_checker(prediction_prev_iter, prediction_iter, self._target)
+                delta = 2 * np.abs(self.loss_now - loss_prev) / (np.abs(self.loss_now) + np.abs(loss_prev))
                 if self.i_iter % self.disp == 0:
                     self.logger.info(f'iteration: {self.i_iter} - new loss: {self.loss_now} - delta: {delta}')
                 if delta < self.tolerance:
                     not_converged = False
                     self.logger.info(f'Convergence achieved in {self.i_iter} iterations - new loss: {self.loss_now} - delta: {delta} < {self.tolerance}')
-            # store previous prediction to monitor convergence
-            prediction_prev_iter = prediction_iter.copy()
             # update missings
             self._data_mod_only_miss.values[self.lags_input:][self._bool_miss] = prediction_iter[self._bool_miss]
             # update idio
             self.eps = self._data_mod_only_miss.values[self.lags_input:] - prediction_iter
+            loss_prev = self.loss_now
             self.i_iter += 1
 
         self.factors_ae = factors_ae_sims.numpy().reshape(self.epoch, T, -1)
@@ -317,9 +332,44 @@ class DDFM:
         if not_converged:
             self.logger.info("Convergence not achieved within the maximum number of iteration!")
 
-    def _numpy_to_df_mean_and_cov(self, mean, cov, steps_ahead):
+    def _numpy_to_df_mean_and_cov(self, mean: np.ndarray, cov: np.ndarray, steps_ahead: int) -> Tuple[pd.DataFrame, pd.DataFrame]:
         df_mean = pd.DataFrame(mean, index=range(steps_ahead + 1), columns=self.variable_order)
         index = pd.MultiIndex.from_product([range(steps_ahead + 1), self.variable_order],
                                            names=["Horizon", "Variable"])
         df_cov = pd.DataFrame(cov.reshape(steps_ahead * mean.shape[1]), index=index, columns=self.variable_order)
         return df_mean, df_cov
+
+    def _fit_method_ae(self, T: int) -> tf.types.experimental.PolymorphicFunction:
+        @tf.function
+        def train_all_epochs(x_sim_noisy: tf.Tensor):
+            vars_ = self.autoencoder.trainable_variables
+            for e in tf.range(self.epoch):
+                x_sim = tf.slice(x_sim_noisy, [e * T, 0], [T, -1])
+                for i in tf.range(0, T, self.batch_size):
+                    size_i = self.batch_size if self.batch_size <= T - i else T - i
+                    with tf.GradientTape() as tape:
+                        prediction = self.autoencoder(tf.slice(x_sim, [i, 0], [size_i, -1]), training=True)
+                        loss_value = mse_missing(tf.slice(self._target_tf, [i, 0], [size_i, -1]), prediction)
+                    grads = tape.gradient(loss_value, vars_)
+                    self.optimizer.apply_gradients(zip(grads, vars_))
+        return train_all_epochs
+
+    def _fit_method_var_ae(self, T: int) -> tf.types.experimental.PolymorphicFunction:
+        @tf.function
+        def train_all_epochs(x_sim_noisy: tf.Tensor):
+            vars_ = self.autoencoder.trainable_variables # var dynamics are updated in closed form
+            for e in tf.range(self.epoch):
+                x_sim = tf.slice(x_sim_noisy, [e * T, 0], [T, -1])
+                for i in tf.range(0, T, self.batch_size):
+                    size_i = self.batch_size if self.batch_size <= T - i else T - i
+                    with tf.GradientTape() as tape:
+                        total_loss, recon_loss, var_loss = (
+                            self.var_autoencoder.compute_loss(
+                                tf.slice(x_sim, [i, 0], [size_i, -1]),
+                                tf.slice(self._target_tf, [i, 0], [size_i, -1]),
+                                with_var_training=False
+                            )
+                        )
+                    grads = tape.gradient(total_loss, vars_)
+                    self.optimizer.apply_gradients(zip(grads, vars_))
+        return train_all_epochs
