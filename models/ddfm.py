@@ -342,6 +342,8 @@ class DDFM:
         return df_mean, df_cov
 
     def _fit_method_ae(self, T: int, D: int) -> tf.types.experimental.PolymorphicFunction:
+        epoch = tf.constant(self.epoch, dtype=tf.int32)
+        batch_size = tf.constant(self.batch_size, dtype=tf.int32)
         @tf.function(
             input_signature=[
                 tf.TensorSpec(shape=[None, D * (self.lags_input + 1)], dtype=tf.float32)
@@ -349,10 +351,10 @@ class DDFM:
         )
         def train_all_epochs(x_sim_noisy: tf.Tensor):
             vars_ = self.autoencoder.trainable_variables
-            for e in tf.range(self.epoch):
+            for e in tf.range(epoch):
                 x_sim = tf.slice(x_sim_noisy, [e * T, 0], [T, -1])
-                for i in tf.range(0, T, self.batch_size):
-                    size_i = self.batch_size if self.batch_size <= T - i else T - i
+                for i in tf.range(0, T, batch_size):
+                    size_i = batch_size if batch_size <= T - i else T - i
                     with tf.GradientTape() as tape:
                         prediction = self.autoencoder(tf.slice(x_sim, [i, 0], [size_i, -1]), training=True)
                         loss_value = mse_missing(tf.slice(self._target_tf, [i, 0], [size_i, -1]), prediction)
@@ -361,6 +363,8 @@ class DDFM:
         return train_all_epochs
 
     def _fit_method_var_ae(self, T: int, D: int) -> tf.types.experimental.PolymorphicFunction:
+        epoch = tf.constant(self.epoch, dtype=tf.int32)
+        batch_size = tf.constant(self.batch_size, dtype=tf.int32)
         @tf.function(
             input_signature=[
                 tf.TensorSpec(shape=[None, D * (self.lags_input + 1)], dtype=tf.float32)
@@ -368,10 +372,10 @@ class DDFM:
         )
         def train_all_epochs(x_sim_noisy: tf.Tensor):
             vars_ = self.autoencoder.trainable_variables # var dynamics are updated in closed form
-            for e in tf.range(self.epoch):
+            for e in tf.range(epoch):
                 x_sim = tf.slice(x_sim_noisy, [e * T, 0], [T, -1])
-                for i in tf.range(0, T, self.batch_size):
-                    size_i = self.batch_size if self.batch_size <= T - i else T - i
+                for i in tf.range(0, T, batch_size):
+                    size_i = batch_size if batch_size <= T - i else T - i
                     with tf.GradientTape() as tape:
                         total_loss, recon_loss, var_loss = (
                             self.var_autoencoder.compute_loss(
