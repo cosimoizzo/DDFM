@@ -196,6 +196,7 @@ class DDFM:
         self._bool_miss = self.data.isnull()[self.lags_input:].values
         self._bool_no_miss = self._bool_miss == False
         # create two copies of the original data which will be modified during training
+        # (missing data imputation and idiosyncratic one side filtering)
         self._data_mod_only_miss, self._data_mod = self.data.copy(), self.data.copy()
         self._target = self.data[self.lags_input:].values
         self._target_tf = tf.convert_to_tensor(self._target, dtype=tf.float32)
@@ -274,20 +275,20 @@ class DDFM:
         # update missing
         self._data_mod_only_miss.values[self.lags_input:][self._bool_miss] = prediction_iter[self._bool_miss]
         # idiosyncratic term
-        self.eps = self._data_tmp[self.variable_order].values - prediction_iter
+        self.eps = self._data_mod_only_miss.values[self.lags_input:] - prediction_iter
         # start MCMC iterations
         self.i_iter = 0
         not_converged = True
         T, D = self._data_tmp.shape[0], self.data.shape[1]
-        fit_method = self._fit_method_var_ae(T) if self.jointly_est_var else self._fit_method_ae(T)
+        fit_method = self._fit_method_var_ae(T, D) if self.jointly_est_var else self._fit_method_ae(T, D)
         while not_converged and self.i_iter < self.max_iter:
             # get idio distribution
-            phi, mu_eps, std_eps = get_idio(self.eps, self._bool_no_miss)
+            phi, mu_eps, std_eps = get_idio(self.eps, self._bool_no_miss, force_zero_mean=True)
             # subtract conditional AR-idio mean from x
             self._data_mod[self.lags_input + 1:] = self._data_mod_only_miss[self.lags_input + 1:] - self.eps[:-1, :] @ phi
             # for first observations set to 0 the idio
             self._data_mod[:self.lags_input + 1] = self._data_mod_only_miss[:self.lags_input + 1]
-            # gen data_tmp from data_mod
+            # gen data_tmp from _data_mod
             self._build_inputs(interpolate=False)
             # gen MC samples for idio (dims = Sim x T * D)
             eps_draws = self.rng.multivariate_normal(mu_eps, np.diag(std_eps ** 2), self.epoch * T)
@@ -340,8 +341,12 @@ class DDFM:
         df_cov = pd.DataFrame(cov.reshape(steps_ahead * mean.shape[1]), index=index, columns=self.variable_order)
         return df_mean, df_cov
 
-    def _fit_method_ae(self, T: int) -> tf.types.experimental.PolymorphicFunction:
-        @tf.function
+    def _fit_method_ae(self, T: int, D: int) -> tf.types.experimental.PolymorphicFunction:
+        @tf.function(
+            input_signature=[
+                tf.TensorSpec(shape=[None, D * (self.lags_input + 1)], dtype=tf.float32)
+            ]
+        )
         def train_all_epochs(x_sim_noisy: tf.Tensor):
             vars_ = self.autoencoder.trainable_variables
             for e in tf.range(self.epoch):
@@ -355,8 +360,12 @@ class DDFM:
                     self.optimizer.apply_gradients(zip(grads, vars_))
         return train_all_epochs
 
-    def _fit_method_var_ae(self, T: int) -> tf.types.experimental.PolymorphicFunction:
-        @tf.function
+    def _fit_method_var_ae(self, T: int, D: int) -> tf.types.experimental.PolymorphicFunction:
+        @tf.function(
+            input_signature=[
+                tf.TensorSpec(shape=[None, D * (self.lags_input + 1)], dtype=tf.float32)
+            ]
+        )
         def train_all_epochs(x_sim_noisy: tf.Tensor):
             vars_ = self.autoencoder.trainable_variables # var dynamics are updated in closed form
             for e in tf.range(self.epoch):

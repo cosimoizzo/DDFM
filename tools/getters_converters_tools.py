@@ -95,7 +95,7 @@ def get_transition_params(f_t: np.ndarray, eps_t: np.ndarray, factor_order: int,
     Σ_0[A_f.shape[1]:, A_f.shape[1]:] = np.diag(np.diag(Σ_0[A_f.shape[1]:, A_f.shape[1]:]))
     return A, W, mu_0, Σ_0, x_t
 
-def get_idio(eps: np.ndarray, idx_no_missings: np.ndarray, min_obs: int = 5) -> Tuple[
+def get_idio(eps: np.ndarray, idx_no_missings: np.ndarray, min_obs: int = 5, force_zero_mean: bool = True) -> Tuple[
     np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute statistics from idiosyncratic terms: AR(1), mean, stds
@@ -103,9 +103,10 @@ def get_idio(eps: np.ndarray, idx_no_missings: np.ndarray, min_obs: int = 5) -> 
         eps: idiosyncratic AR(1)s
         idx_no_missings: array to keep track of non-missing values
         min_obs: minimum number of observations to estimate the statistics
+        force_zero_mean: whether to force zero unconditional mean
 
     Returns:
-        autoregressive coefficients, mean, standard deviation
+        autoregressive coefficients, unconditional mean and standard deviation
     """
     # init params statistics
     phi = np.zeros((eps.shape[1], eps.shape[1]))
@@ -119,7 +120,8 @@ def get_idio(eps: np.ndarray, idx_no_missings: np.ndarray, min_obs: int = 5) -> 
             this_eps = eps[to_select, j]
         else:
             raise ValueError(f"Not enough observation ({min_obs}) to estimate idio AR(1) parameters.")
-        mu_eps[j] = np.mean(this_eps)
+        if not force_zero_mean:
+            mu_eps[j] = np.mean(this_eps)
         std_eps[j] = np.std(this_eps, ddof=1)
         cov1_eps = np.cov(this_eps[1:], this_eps[:-1])[0][1]
         phi[j, j] = np.clip(cov1_eps / (std_eps[j] ** 2), -0.99, 0.99)
@@ -147,7 +149,9 @@ def get_data_with_lags(interpolate: bool, data_raw: Union[pd.DataFrame, np.ndarr
             for col in df.columns
             for lag in range(1, lags_input + 1)
         }
-        df = pd.concat([df, pd.DataFrame(lagged)], axis=1)
-        df = df.iloc[lags_input:].reset_index(drop=True)
+        # possible starting missing values in lagged to correct for
+        df_lagged = pd.DataFrame(lagged)
+        df = pd.concat([df, df_lagged], axis=1)
+        df = df.iloc[lags_input:].reset_index(drop=True).fillna(value=0) # fill initial missing values with 0 mean
 
     return df
