@@ -19,10 +19,24 @@ class TestLossTools(unittest.TestCase):
 
     def test_mse_missing(self):
         self.assertEqual(
-            np.sum(mse_missing(tf.convert_to_tensor(self.y_actual), tf.convert_to_tensor(self.y_predicted)).numpy()), 0)
+            np.sum(
+                mse_missing(
+                    tf.convert_to_tensor(self.y_actual),
+                    tf.convert_to_tensor(self.y_predicted),
+                ).numpy()
+            ),
+            0,
+        )
         self.assertEqual(
-            np.sum(mse_missing(tf.convert_to_tensor(self.y_actual), tf.convert_to_tensor(self.y_predicted)).numpy()), 0)
+            np.sum(
+                mse_missing(
+                    tf.convert_to_tensor(self.y_actual),
+                    tf.convert_to_tensor(self.y_predicted),
+                ).numpy()
+            ),
+            0,
+        )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

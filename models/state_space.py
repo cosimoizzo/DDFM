@@ -4,9 +4,17 @@ from pykalman import KalmanFilter
 from pykalman.standard import _last_dims, _filter_predict, _filter_correct, _smooth
 
 
-def _filter(transition_matrices, observation_matrices, transition_covariance,
-            observation_covariance, transition_offsets, observation_offsets,
-            initial_state_mean, initial_state_covariance, observations):
+def _filter(
+    transition_matrices,
+    observation_matrices,
+    transition_covariance,
+    observation_covariance,
+    transition_offsets,
+    observation_offsets,
+    initial_state_mean,
+    initial_state_covariance,
+    observations,
+):
     """
     Modified version of the PyKalman (https://pypi.org/project/pykalman/) _filter.
     Changes: I modify the original version to deal with missing observations following Shumway and Stoffer (2000,1982).
@@ -17,14 +25,10 @@ def _filter(transition_matrices, observation_matrices, transition_covariance,
     n_dim_obs = observations.shape[1]
 
     predicted_state_means = np.zeros((n_timesteps, n_dim_state))
-    predicted_state_covariances = np.zeros(
-        (n_timesteps, n_dim_state, n_dim_state)
-    )
+    predicted_state_covariances = np.zeros((n_timesteps, n_dim_state, n_dim_state))
     kalman_gains = np.zeros((n_timesteps, n_dim_state, n_dim_obs))
     filtered_state_means = np.zeros((n_timesteps, n_dim_state))
-    filtered_state_covariances = np.zeros(
-        (n_timesteps, n_dim_state, n_dim_state)
-    )
+    filtered_state_covariances = np.zeros((n_timesteps, n_dim_state, n_dim_state))
 
     for t in range(n_timesteps):
         if t == 0:
@@ -34,14 +38,12 @@ def _filter(transition_matrices, observation_matrices, transition_covariance,
             transition_matrix = _last_dims(transition_matrices, t - 1)
             transition_covariance = _last_dims(transition_covariance, t - 1)
             transition_offset = _last_dims(transition_offsets, t - 1, ndims=1)
-            predicted_state_means[t], predicted_state_covariances[t] = (
-                _filter_predict(
-                    transition_matrix,
-                    transition_covariance,
-                    transition_offset,
-                    filtered_state_means[t - 1],
-                    filtered_state_covariances[t - 1]
-                )
+            predicted_state_means[t], predicted_state_covariances[t] = _filter_predict(
+                transition_matrix,
+                transition_covariance,
+                transition_offset,
+                filtered_state_means[t - 1],
+                filtered_state_covariances[t - 1],
             )
 
         observation_matrix = _last_dims(observation_matrices, t).copy()
@@ -56,23 +58,29 @@ def _filter(transition_matrices, observation_matrices, transition_covariance,
             observation_matrix[nan_mask, :] = 0
             observation_covariance[nan_mask, :] = 0
             observation_covariance[:, nan_mask] = 0
-            observation_covariance[nan_mask, nan_mask] = np.diag(observation_covariance)[nan_mask]
+            observation_covariance[nan_mask, nan_mask] = np.diag(
+                observation_covariance
+            )[nan_mask]
             observation_t_mod[nan_mask] = 0
 
-        (kalman_gains[t], filtered_state_means[t],
-         filtered_state_covariances[t]) = (
-            _filter_correct(observation_matrix,
-                            observation_covariance,
-                            observation_offset,
-                            predicted_state_means[t],
-                            predicted_state_covariances[t],
-                            observation_t_mod
-                            )
+        (kalman_gains[t], filtered_state_means[t], filtered_state_covariances[t]) = (
+            _filter_correct(
+                observation_matrix,
+                observation_covariance,
+                observation_offset,
+                predicted_state_means[t],
+                predicted_state_covariances[t],
+                observation_t_mod,
+            )
         )
 
-    return (predicted_state_means, predicted_state_covariances,
-            kalman_gains, filtered_state_means,
-            filtered_state_covariances)
+    return (
+        predicted_state_means,
+        predicted_state_covariances,
+        kalman_gains,
+        filtered_state_means,
+        filtered_state_covariances,
+    )
 
 
 class KalmanFilterMod(KalmanFilter):
@@ -84,21 +92,27 @@ class KalmanFilterMod(KalmanFilter):
         """
         Z = self._parse_observations(x)
 
-        (transition_matrices, transition_offsets, transition_covariance,
-         observation_matrices, observation_offsets, observation_covariance,
-         initial_state_mean, initial_state_covariance) = (
-            self._initialize_parameters()
-        )
+        (
+            transition_matrices,
+            transition_offsets,
+            transition_covariance,
+            observation_matrices,
+            observation_offsets,
+            observation_covariance,
+            initial_state_mean,
+            initial_state_covariance,
+        ) = self._initialize_parameters()
 
-        (_, _, _, filtered_state_means,
-         filtered_state_covariances) = (
-            _filter(
-                transition_matrices, observation_matrices,
-                transition_covariance, observation_covariance,
-                transition_offsets, observation_offsets,
-                initial_state_mean, initial_state_covariance,
-                Z
-            )
+        (_, _, _, filtered_state_means, filtered_state_covariances) = _filter(
+            transition_matrices,
+            observation_matrices,
+            transition_covariance,
+            observation_covariance,
+            transition_offsets,
+            observation_offsets,
+            initial_state_mean,
+            initial_state_covariance,
+            Z,
         )
         return (filtered_state_means, filtered_state_covariances)
 
@@ -154,10 +168,16 @@ class KalmanFilterMod(KalmanFilter):
         smoothed_state_means, smoothed_state_covariances = self.smooth(x)
         predicted_state_mean = smoothed_state_means[-1]
         predicted_state_covariance = smoothed_state_covariances[-1]
-        return self.predict_from_state(predicted_state_mean, predicted_state_covariance, steps_ahead)
+        return self.predict_from_state(
+            predicted_state_mean, predicted_state_covariance, steps_ahead
+        )
 
-    def predict_from_state(self, predicted_state_mean: np.ndarray, predicted_state_covariance: np.ndarray,
-                           steps_ahead: int):
+    def predict_from_state(
+        self,
+        predicted_state_mean: np.ndarray,
+        predicted_state_covariance: np.ndarray,
+        steps_ahead: int,
+    ):
         """
         Predict observables, from 0 (fill missing) to steps_ahead forecasting horizon using starting value from state
         distribution at time 0.
@@ -179,28 +199,29 @@ class KalmanFilterMod(KalmanFilter):
         observation_matrix = _last_dims(observation_matrices, -1)
         observation_covariance = _last_dims(observation_covariance, -1)
         observation_offset = _last_dims(observation_offsets, -1, ndims=1)
-        predicted_observation_mean = np.zeros((steps_ahead + 1, observation_offset.shape[0]))
-        predicted_observation_covariance = np.zeros((steps_ahead + 1, observation_offset.shape[0],
-                                                     observation_offset.shape[0]))
+        predicted_observation_mean = np.zeros(
+            (steps_ahead + 1, observation_offset.shape[0])
+        )
+        predicted_observation_covariance = np.zeros(
+            (steps_ahead + 1, observation_offset.shape[0], observation_offset.shape[0])
+        )
         for i in range(steps_ahead + 1):
             predicted_observation_mean[i] = (
-                    np.dot(observation_matrix, predicted_state_mean) + observation_offset
+                np.dot(observation_matrix, predicted_state_mean) + observation_offset
             )
             predicted_observation_covariance[i] = (
-                    np.dot(
-                        observation_matrix,
-                        np.dot(predicted_state_covariance, observation_matrix.T),
-                    )
-                    + observation_covariance
-            )
-            predicted_state_mean, predicted_state_covariance = (
-                _filter_predict(
-                    transition_matrix,
-                    transition_covariance,
-                    transition_offset,
-                    predicted_state_mean,
-                    predicted_state_covariance
+                np.dot(
+                    observation_matrix,
+                    np.dot(predicted_state_covariance, observation_matrix.T),
                 )
+                + observation_covariance
+            )
+            predicted_state_mean, predicted_state_covariance = _filter_predict(
+                transition_matrix,
+                transition_covariance,
+                transition_offset,
+                predicted_state_mean,
+                predicted_state_covariance,
             )
         return predicted_observation_mean, predicted_observation_covariance
 
@@ -217,9 +238,14 @@ class StateSpace:
     State-space model wrapper around modified PyKalman.
     """
 
-    def __init__(self, transition_params: dict, measurement_params: dict,
-                 mean_y: np.ndarray = None, sigma_y: np.ndarray = None,
-                 filter_type: str = "KalmanFilter"):
+    def __init__(
+        self,
+        transition_params: dict,
+        measurement_params: dict,
+        mean_y: np.ndarray = None,
+        sigma_y: np.ndarray = None,
+        filter_type: str = "KalmanFilter",
+    ):
         """
         The init method will build the state space model according to the selected filter.
         Args:
@@ -270,12 +296,22 @@ class StateSpace:
             None, it updates the class attributes.
         """
 
-        self.observation_matrices, self.observation_covariance = measurement_params["observation_matrices"], measurement_params["observation_covariance"]
+        self.observation_matrices, self.observation_covariance = (
+            measurement_params["observation_matrices"],
+            measurement_params["observation_covariance"],
+        )
         self.observation_offsets = measurement_params.get("observation_offsets", None)
-        self.transition_matrices, self.transition_covariance = transition_params["transition_matrices"], transition_params["transition_covariance"]
-        self.ssm_repr = KalmanFilterMod(transition_matrices=self.transition_matrices, observation_matrices=self.observation_matrices,
-                                        transition_covariance=self.transition_covariance, observation_covariance=self.observation_covariance,
-                                        observation_offsets=self.observation_offsets)
+        self.transition_matrices, self.transition_covariance = (
+            transition_params["transition_matrices"],
+            transition_params["transition_covariance"],
+        )
+        self.ssm_repr = KalmanFilterMod(
+            transition_matrices=self.transition_matrices,
+            observation_matrices=self.observation_matrices,
+            transition_covariance=self.transition_covariance,
+            observation_covariance=self.observation_covariance,
+            observation_offsets=self.observation_offsets,
+        )
 
     def predict(self, y: np.ndarray, steps_ahead: int) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -291,13 +327,15 @@ class StateSpace:
         mean, cov = self.ssm_repr.predict(y_cpy, steps_ahead=steps_ahead)
         return self._undo_scale_data(mean, cov)
 
-    def predict_from_state(self, state_mean: np.ndarray, state_cov: np.ndarray,
-                           steps_ahead: int) -> Tuple[np.ndarray, np.ndarray]:
-        mean, cov = self.ssm_repr.predict_from_state(state_mean, state_cov, steps_ahead=steps_ahead)
+    def predict_from_state(
+        self, state_mean: np.ndarray, state_cov: np.ndarray, steps_ahead: int
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        mean, cov = self.ssm_repr.predict_from_state(
+            state_mean, state_cov, steps_ahead=steps_ahead
+        )
         return self._undo_scale_data(mean, cov)
 
-    def filter(self, y: np.ndarray) -> Tuple[
-        np.ndarray, np.ndarray]:
+    def filter(self, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
         State Space filtering step
         Args:
@@ -310,8 +348,7 @@ class StateSpace:
         filtered_state_means, filtered_state_covariances = self.ssm_repr.filter(y_cpy)
         return filtered_state_means, filtered_state_covariances
 
-    def smooth(self, y: np.ndarray) -> Tuple[
-        np.ndarray, np.ndarray]:
+    def smooth(self, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
         State Space smoothing step
         Args:
@@ -324,7 +361,9 @@ class StateSpace:
         smoothed_state_means, smoothed_state_covariances = self.ssm_repr.smooth(y_cpy)
         return smoothed_state_means, smoothed_state_covariances
 
-    def _undo_scale_data(self, mean: np.ndarray, cov: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def _undo_scale_data(
+        self, mean: np.ndarray, cov: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
         if self.sigma_y is not None:
             mean *= self.sigma_y[None, :]
             cov *= np.outer(self.sigma_y, self.sigma_y)[None, :, :]

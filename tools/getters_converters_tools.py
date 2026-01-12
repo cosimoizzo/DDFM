@@ -5,8 +5,12 @@ import pandas as pd
 from tensorflow import keras
 
 
-def convert_decoder_to_numpy(decoder: keras.Model, has_bias: bool, factor_order: int,
-                             structure_decoder: tuple = None) -> Tuple[np.ndarray, np.ndarray]:
+def convert_decoder_to_numpy(
+    decoder: keras.Model,
+    has_bias: bool,
+    factor_order: int,
+    structure_decoder: tuple = None,
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Convert a keras Model decoder to a numpy object
     Args:
@@ -25,25 +29,28 @@ def convert_decoder_to_numpy(decoder: keras.Model, has_bias: bool, factor_order:
             ws = decoder.get_layer(index=-1).get_weights()[0]
             bs = np.zeros(ws.shape[1])
         if factor_order == 2:
-            ws = np.hstack((
-                ws.T,  # weight term
-                np.zeros((ws.shape[1], ws.shape[0])),  # make zero lagged values
-                np.identity(ws.shape[1])  # idio
-            ))
+            ws = np.hstack(
+                (
+                    ws.T,  # weight term
+                    np.zeros((ws.shape[1], ws.shape[0])),  # make zero lagged values
+                    np.identity(ws.shape[1]),  # idio
+                )
+            )
         elif factor_order == 1:
-            ws = np.hstack((
-                ws.T,  # weight term
-                np.identity(ws.shape[1])  # idio
-            ))
+            ws = np.hstack((ws.T, np.identity(ws.shape[1])))  # weight term  # idio
         else:
-            raise NotImplementedError("Only VAR(2) or VAR(1) for common factors at the moment.")
+            raise NotImplementedError(
+                "Only VAR(2) or VAR(1) for common factors at the moment."
+            )
     else:
         raise NotImplementedError("Nonlinear decoder not available yet!")
 
     return bs, ws
 
-def get_transition_params(f_t: np.ndarray, eps_t: np.ndarray, factor_order: int, bool_no_miss: np.ndarray) -> Tuple[
-    np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+
+def get_transition_params(
+    f_t: np.ndarray, eps_t: np.ndarray, factor_order: int, bool_no_miss: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Calculate transition parameters.
     Args:
@@ -63,26 +70,46 @@ def get_transition_params(f_t: np.ndarray, eps_t: np.ndarray, factor_order: int,
         f_past = f_t[:-1, :]
         A_f = np.linalg.lstsq(f_past, f_t[1:, :], rcond=None)[0].T
     else:
-        raise NotImplementedError("Only VAR(2) or VAR(1) for common factors at the moment.")
+        raise NotImplementedError(
+            "Only VAR(2) or VAR(1) for common factors at the moment."
+        )
     # get AR coeffs. from idiosyncratic
     A_eps, _, _ = get_idio(eps_t, bool_no_miss)
     # companion form x_t = [f_t, f_t_1, eps_t]
     if factor_order == 2:
         x_t = np.vstack((f_t[1:, :].T, f_t[:-1, :].T, eps_t[1:, :].T))
-        A = np.vstack((
-            np.hstack(
-                (A_f, np.zeros((A_f.shape[0], eps_t.shape[1])))),  # VAR factors
-            np.hstack((np.identity(A_f.shape[0]), np.zeros((A_f.shape[0], A_f.shape[0] + eps_t.shape[1])))),
-            np.hstack((np.zeros((eps_t.shape[1], A_f.shape[1])), A_eps))  # AR 1 idio
-        ))
+        A = np.vstack(
+            (
+                np.hstack(
+                    (A_f, np.zeros((A_f.shape[0], eps_t.shape[1])))
+                ),  # VAR factors
+                np.hstack(
+                    (
+                        np.identity(A_f.shape[0]),
+                        np.zeros((A_f.shape[0], A_f.shape[0] + eps_t.shape[1])),
+                    )
+                ),
+                np.hstack(
+                    (np.zeros((eps_t.shape[1], A_f.shape[1])), A_eps)
+                ),  # AR 1 idio
+            )
+        )
     elif factor_order == 1:
         x_t = np.vstack((f_t.T, eps_t.T))
-        A = np.vstack((
-            np.hstack((A_f, np.zeros((A_f.shape[0], eps_t.shape[1])))),  # VAR factors
-            np.hstack((np.zeros((eps_t.shape[1], A_f.shape[1])), A_eps))  # AR 1 idio
-        ))
+        A = np.vstack(
+            (
+                np.hstack(
+                    (A_f, np.zeros((A_f.shape[0], eps_t.shape[1])))
+                ),  # VAR factors
+                np.hstack(
+                    (np.zeros((eps_t.shape[1], A_f.shape[1])), A_eps)
+                ),  # AR 1 idio
+            )
+        )
     else:
-        raise NotImplementedError("Only VAR(2) or VAR(1) for common factors at the moment.")
+        raise NotImplementedError(
+            "Only VAR(2) or VAR(1) for common factors at the moment."
+        )
     # error term matrix
     w_t = x_t[:, 1:] - A @ x_t[:, :-1]
     W = np.diag(np.diag(np.cov(w_t)))
@@ -90,13 +117,20 @@ def get_transition_params(f_t: np.ndarray, eps_t: np.ndarray, factor_order: int,
     mu_0 = np.mean(x_t, axis=1)
     Σ_0 = np.cov(x_t)
     # zero correlation with idiosyncratic and diagonal covariance among them
-    Σ_0[:A_f.shape[1], A_f.shape[1]:] = 0
-    Σ_0[A_f.shape[1]:, :A_f.shape[1]] = 0
-    Σ_0[A_f.shape[1]:, A_f.shape[1]:] = np.diag(np.diag(Σ_0[A_f.shape[1]:, A_f.shape[1]:]))
+    Σ_0[: A_f.shape[1], A_f.shape[1] :] = 0
+    Σ_0[A_f.shape[1] :, : A_f.shape[1]] = 0
+    Σ_0[A_f.shape[1] :, A_f.shape[1] :] = np.diag(
+        np.diag(Σ_0[A_f.shape[1] :, A_f.shape[1] :])
+    )
     return A, W, mu_0, Σ_0, x_t
 
-def get_idio(eps: np.ndarray, idx_no_missings: np.ndarray, min_obs: int = 5, force_zero_mean: bool = True) -> Tuple[
-    np.ndarray, np.ndarray, np.ndarray]:
+
+def get_idio(
+    eps: np.ndarray,
+    idx_no_missings: np.ndarray,
+    min_obs: int = 5,
+    force_zero_mean: bool = True,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute statistics from idiosyncratic terms: AR(1), mean, stds
     Args:
@@ -119,7 +153,9 @@ def get_idio(eps: np.ndarray, idx_no_missings: np.ndarray, min_obs: int = 5, for
         if np.sum(to_select) >= min_obs:
             this_eps = eps[to_select, j]
         else:
-            raise ValueError(f"Not enough observation ({min_obs}) to estimate idio AR(1) parameters.")
+            raise ValueError(
+                f"Not enough observation ({min_obs}) to estimate idio AR(1) parameters."
+            )
         if not force_zero_mean:
             mu_eps[j] = np.mean(this_eps)
         std_eps[j] = np.std(this_eps, ddof=1)
@@ -127,7 +163,10 @@ def get_idio(eps: np.ndarray, idx_no_missings: np.ndarray, min_obs: int = 5, for
         phi[j, j] = np.clip(cov1_eps / (std_eps[j] ** 2), -0.99, 0.99)
     return phi, mu_eps, std_eps
 
-def get_data_with_lags(interpolate: bool, data_raw: Union[pd.DataFrame, np.ndarray], lags_input: int) -> pd.DataFrame:
+
+def get_data_with_lags(
+    interpolate: bool, data_raw: Union[pd.DataFrame, np.ndarray], lags_input: int
+) -> pd.DataFrame:
     """
     Modify input data with interpolation and lagged values
     Args:
@@ -152,6 +191,8 @@ def get_data_with_lags(interpolate: bool, data_raw: Union[pd.DataFrame, np.ndarr
         # possible starting missing values in lagged to correct for
         df_lagged = pd.DataFrame(lagged)
         df = pd.concat([df, df_lagged], axis=1)
-        df = df.iloc[lags_input:].reset_index(drop=True).fillna(value=0) # fill initial missing values with 0 mean
+        df = (
+            df.iloc[lags_input:].reset_index(drop=True).fillna(value=0)
+        )  # fill initial missing values with 0 mean
 
     return df

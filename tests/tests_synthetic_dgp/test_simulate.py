@@ -37,5 +37,5 @@ class TestSIMULATE(unittest.TestCase):
         self.assertEqual(self.simulate.evaluate(self.simulate.f), 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

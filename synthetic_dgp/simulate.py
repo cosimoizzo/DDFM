@@ -11,8 +11,18 @@ class SIMULATE(object):
     Augmented with polynomial and sign factors.
     """
 
-    def __init__(self, seed: int, n: int = 10, r: int = 1, poly_degree: int = 1, sign_features: int = 0,
-                 rho: float = 0.7, alpha: float = 0.2, u: float = 0.1, tau: float = 0):
+    def __init__(
+        self,
+        seed: int,
+        n: int = 10,
+        r: int = 1,
+        poly_degree: int = 1,
+        sign_features: int = 0,
+        rho: float = 0.7,
+        alpha: float = 0.2,
+        u: float = 0.1,
+        tau: float = 0,
+    ):
         """
 
         Args:
@@ -60,18 +70,30 @@ class SIMULATE(object):
             poly = PolynomialFeatures(self.poly_degree, include_bias=False)
             f = poly.fit_transform(f)
         if self.sign_features > 0:
-            f = np.hstack((f, np.sign(f[:, :self.sign_features])))
+            f = np.hstack((f, np.sign(f[:, : self.sign_features])))
         # loadings
-        Lambda = self.rng.multivariate_normal(np.zeros(f.shape[1]), np.identity(f.shape[1]), self.n)
-        # idio 
+        Lambda = self.rng.multivariate_normal(
+            np.zeros(f.shape[1]), np.identity(f.shape[1]), self.n
+        )
+        # idio
         beta = self.rng.uniform(self.u, 1 - self.u, self.n)
         gamma = np.zeros_like(beta)
         for i in range(self.n):
-            gamma[i] = beta[i] / (1 - beta[i]) * 1 / (1 - self.alpha ** 2) * np.sum(Lambda[i, :] ** 2)
+            gamma[i] = (
+                beta[i]
+                / (1 - beta[i])
+                * 1
+                / (1 - self.alpha**2)
+                * np.sum(Lambda[i, :] ** 2)
+            )
         phi = np.zeros((self.n, self.n))
         for i in range(self.n):
             for j in range(self.n):
-                phi[i, j] = (self.tau ** (np.abs(i - j))) * (1 - self.alpha ** 2) * np.sqrt(gamma[i] * gamma[j])
+                phi[i, j] = (
+                    (self.tau ** (np.abs(i - j)))
+                    * (1 - self.alpha**2)
+                    * np.sqrt(gamma[i] * gamma[j])
+                )
         v_t = self.rng.multivariate_normal(np.zeros(self.n), phi, t_obs)
         D = np.diag(self.alpha * np.ones(self.n))
         eps = np.zeros_like(v_t)
@@ -103,6 +125,7 @@ class SIMULATE(object):
         """
         if f_true is None:
             f_true = self.f
-        precision_score = np.trace(f_true.T @ f_hat @ np.linalg.pinv(f_hat.T @ f_hat) @ f_hat.T @ f_true) / np.trace(
-            f_true.T @ f_true)
+        precision_score = np.trace(
+            f_true.T @ f_hat @ np.linalg.pinv(f_hat.T @ f_hat) @ f_hat.T @ f_true
+        ) / np.trace(f_true.T @ f_true)
         return precision_score
