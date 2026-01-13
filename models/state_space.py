@@ -362,8 +362,11 @@ class StateSpace:
         return smoothed_state_means, smoothed_state_covariances
 
     def _undo_scale_data(
-        self, mean: np.ndarray, cov: np.ndarray
+        self, mean: np.ndarray, cov: np.ndarray, round_to: int = 10
     ) -> Tuple[np.ndarray, np.ndarray]:
+        if round_to:
+            mean = np.round(mean, round_to)
+            cov = np.round(cov, round_to)
         if self.sigma_y is not None:
             mean *= self.sigma_y[None, :]
             cov *= np.outer(self.sigma_y, self.sigma_y)[None, :, :]

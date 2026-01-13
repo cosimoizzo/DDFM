@@ -22,14 +22,15 @@ class TestDDFM(unittest.TestCase):
             else (r_f_and_nnlinf,)
         )
 
-    def test_fit(self):
+    def test_fit_predict(self):
         """
         Testing true states are recovered with R2 of at least 80%, autoencoder is consistent with decode+encode, a
-        state space representation can be built.
+        state space representation can be built, predict returns correct shapes.
         """
         for jointly_est_var in [True, False]:
             ddfm = self._get_model(self.structure_encoder, jointly_est_var)
             self._single_test_fit(ddfm)
+            self._single_test_predict(ddfm)
 
     def test_replicability(self):
         """
@@ -70,6 +71,23 @@ class TestDDFM(unittest.TestCase):
         self.assertIsInstance(
             ddfm.state_space, StateSpace, msg="Failed to build state_space"
         )
+        np.testing.assert_array_almost_equal(
+            ddfm.mean_data,
+            ddfm.state_space.mean_y,
+            err_msg="Mean in ddfm and state space object do not match.",
+        )
+        np.testing.assert_array_almost_equal(
+            ddfm.sigma_data,
+            ddfm.state_space.sigma_y,
+            err_msg="Vols in ddfm and state space object do not match.",
+        )
+
+    def _single_test_predict(self, ddfm):
+        mean, covs = ddfm.predict(pd.DataFrame(self.x), steps_ahead=2)
+        self.assertEqual(mean.shape[0], 3)
+        self.assertEqual(mean.shape[1], self.x.shape[1])
+        self.assertEqual(covs.shape[0], 3 * self.x.shape[1])
+        self.assertEqual(covs.shape[1], self.x.shape[1])
 
 
 if __name__ == "__main__":

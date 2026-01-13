@@ -91,7 +91,7 @@ class DDFM:
         self.rng = np.random.RandomState(seed)
         # learning process
         self.batch_size = batch_size
-        self.epoch = epochs
+        self.epochs = epochs
         self.max_iter = max_iter
         self.tolerance = tolerance
         self.disp = disp
@@ -243,7 +243,7 @@ class DDFM:
         self.data = (data - self.mean_data) / self.sigma_data
         # keep track of missing
         self._bool_miss = self.data.isnull()[self.lags_input :].values
-        self._bool_no_miss = self._bool_miss == False
+        self._bool_no_miss = ~self._bool_miss
         # create two copies of the original data which will be modified during training
         # (missing data imputation and idiosyncratic one side filtering)
         self._data_mod_only_miss, self._data_mod = self.data.copy(), self.data.copy()
@@ -354,7 +354,7 @@ class DDFM:
         self.autoencoder.fit(
             inpt_pre_train,
             oupt_pre_train,
-            epochs=self.epoch * mult_epoch_pre,
+            epochs=self.epochs * mult_epoch_pre,
             batch_size=self.batch_size,
             verbose=0,
             shuffle=False,
@@ -405,20 +405,20 @@ class DDFM:
             self._build_inputs(interpolate=False)
             # gen MC samples for idio (dims = Sim x T * D)
             eps_draws = self.rng.multivariate_normal(
-                mu_eps, np.diag(std_eps**2), self.epoch * T
+                mu_eps, np.diag(std_eps**2), self.epochs * T
             )
-            x_sim_noisy = np.concatenate([self._data_tmp.copy()] * self.epoch, axis=0)
+            x_sim_noisy = np.tile(self._data_tmp.values, (self.epochs, 1))
             x_sim_noisy[:, :D] -= eps_draws
             x_sim_noisy = tf.convert_to_tensor(x_sim_noisy, dtype=tf.float32)
             fit_method(x_sim_noisy)
             # update factors: average over all predictions from the MC samples
             factors_ae_sims = self.encoder(x_sim_noisy)
             prediction_iter = tf.reduce_mean(
-                tf.reshape(self.decoder(factors_ae_sims), (self.epoch, T, D)), axis=0
+                tf.reshape(self.decoder(factors_ae_sims), (self.epochs, T, D)), axis=0
             ).numpy()
             if self.var_loss_weight > 0:
                 z_latent = tf.reduce_mean(
-                    tf.reshape(factors_ae_sims, (self.epoch, T, self.var_layer.n_vars)),
+                    tf.reshape(factors_ae_sims, (self.epochs, T, self.var_layer.n_vars)),
                     axis=0,
                 )
                 self.var_layer.update_weights_closed_form(z_latent)
@@ -462,7 +462,7 @@ class DDFM:
             loss_prev = self.loss_now
             self.i_iter += 1
 
-        self.factors_ae = factors_ae_sims.numpy().reshape(self.epoch, T, -1)
+        self.factors_ae = factors_ae_sims.numpy().reshape(self.epochs, T, -1)
         # get last neurons (making difference between nonlinear and linear decoder)
         if self.structure_decoder is None or len(self.decoder.layers) == 1:
             self.last_neurons = self.factors_ae
@@ -474,7 +474,7 @@ class DDFM:
             self.last_neurons = (
                 decoder_for_last_neuron(self.encoder(x_sim_noisy))
                 .numpy()
-                .reshape(self.epoch, T, -1)
+                .reshape(self.epochs, T, -1)
             )
 
         if not_converged:
@@ -492,7 +492,7 @@ class DDFM:
             [range(steps_ahead + 1), self.variable_order], names=["Horizon", "Variable"]
         )
         df_cov = pd.DataFrame(
-            cov.reshape(steps_ahead * mean.shape[1]),
+            cov.reshape((steps_ahead + 1) * mean.shape[1], mean.shape[1]),
             index=index,
             columns=self.variable_order,
         )
@@ -501,7 +501,7 @@ class DDFM:
     def _fit_method_ae(
         self, T: int, D: int
     ) -> tf.types.experimental.PolymorphicFunction:
-        epoch = tf.constant(self.epoch, dtype=tf.int32)
+        epochs = tf.constant(self.epochs, dtype=tf.int32)
         batch_size = tf.constant(self.batch_size, dtype=tf.int32)
 
         @tf.function(
@@ -511,7 +511,7 @@ class DDFM:
         )
         def train_all_epochs(x_sim_noisy: tf.Tensor):
             vars_ = self.autoencoder.trainable_variables
-            for e in tf.range(epoch):
+            for e in tf.range(epochs):
                 x_sim = tf.slice(x_sim_noisy, [e * T, 0], [T, -1])
                 for i in tf.range(0, T, batch_size):
                     size_i = batch_size if batch_size <= T - i else T - i
@@ -530,7 +530,7 @@ class DDFM:
     def _fit_method_var_ae(
         self, T: int, D: int
     ) -> tf.types.experimental.PolymorphicFunction:
-        epoch = tf.constant(self.epoch, dtype=tf.int32)
+        epochs = tf.constant(self.epochs, dtype=tf.int32)
         batch_size = tf.constant(self.batch_size, dtype=tf.int32)
 
         @tf.function(
@@ -542,7 +542,7 @@ class DDFM:
             vars_ = (
                 self.autoencoder.trainable_variables
             )  # var dynamics are updated in closed form
-            for e in tf.range(epoch):
+            for e in tf.range(epochs):
                 x_sim = tf.slice(x_sim_noisy, [e * T, 0], [T, -1])
                 for i in tf.range(0, T, batch_size):
                     size_i = batch_size if batch_size <= T - i else T - i
