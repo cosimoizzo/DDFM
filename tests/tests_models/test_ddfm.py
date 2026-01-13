@@ -51,7 +51,7 @@ class TestDDFM(unittest.TestCase):
             use_bias=False,
             link="relu",
             max_iter=1000,
-            var_loss_weight= 1 if jointly_est_var else 0,
+            var_loss_weight=1 if jointly_est_var else 0,
             seed=seed,
         )
         ddfm.fit(pd.DataFrame(self.x), build_state_space=True)

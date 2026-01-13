@@ -297,7 +297,7 @@ class DDFM:
                 ),
                 bias_initializer="zeros",
             )(latent_inputs)
-            for c,j in enumerate(self.structure_decoder[1:]):
+            for c, j in enumerate(self.structure_decoder[1:]):
                 decoded = layers.Dense(
                     j,
                     activation=self.link,
@@ -332,7 +332,11 @@ class DDFM:
                 n_vars=self.structure_encoder[-1], var_order=self.factor_order
             )
             self.var_autoencoder = VARAutoencoder(
-                self.encoder, self.var_layer, self.decoder, ae_loss=mse_missing, var_loss_weight=self.var_loss_weight
+                self.encoder,
+                self.var_layer,
+                self.decoder,
+                ae_loss=mse_missing,
+                var_loss_weight=self.var_loss_weight,
             )
 
     def _build_inputs(self, interpolate: bool = True) -> None:
@@ -408,6 +412,7 @@ class DDFM:
                 mu_eps, np.diag(std_eps**2), self.epochs * T
             )
             x_sim_noisy = np.tile(self._data_tmp.values, (self.epochs, 1))
+            # Column order: [y_t, y_{t-1}, ..., y_{t-lags}]
             x_sim_noisy[:, :D] -= eps_draws
             x_sim_noisy = tf.convert_to_tensor(x_sim_noisy, dtype=tf.float32)
             fit_method(x_sim_noisy)
@@ -418,7 +423,9 @@ class DDFM:
             ).numpy()
             if self.var_loss_weight > 0:
                 z_latent = tf.reduce_mean(
-                    tf.reshape(factors_ae_sims, (self.epochs, T, self.var_layer.n_vars)),
+                    tf.reshape(
+                        factors_ae_sims, (self.epochs, T, self.var_layer.n_vars)
+                    ),
                     axis=0,
                 )
                 self.var_layer.update_weights_closed_form(z_latent)
