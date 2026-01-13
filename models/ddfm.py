@@ -32,7 +32,7 @@ class DDFM:
         structure_decoder: tuple = None,
         use_bias: bool = True,
         factor_order: int = 2,
-        jointly_est_var: bool = False,
+        var_loss_weight: float = 0.0,
         seed: int = 3,
         batch_norm: bool = True,
         link: str = "relu",
@@ -55,7 +55,8 @@ class DDFM:
                 autoencoder with one single linear layer decoder)
             use_bias: whether to use bias term in the last decoder layer
             factor_order: number of lags in the transition equation for the dynamics of the common factors
-            jointly_est_var: whether to estimate jointly the var dynamics of the latent factors
+            var_loss_weight: if > 0, then estimate jointly the var dynamics of the latent factors and add VAR forecast
+                error term in the reconstruction loss of the autoencoder
             seed: seed to control randomness for replicability
             batch_norm: whether to add batch norm layers into the encoder
             link: the type of link/activation function
@@ -73,7 +74,7 @@ class DDFM:
         self.factor_order = factor_order
         if factor_order not in [1, 2]:
             raise ValueError("factor_order must be 1 or 2")
-        self.jointly_est_var = jointly_est_var
+        self.var_loss_weight = var_loss_weight
         self.lags_input = lags_input
         # autoencoder structure
         self.structure_encoder = structure_encoder
@@ -86,8 +87,8 @@ class DDFM:
         else:
             self._filter_type = "ToBeDefined"
         # seed setting
+        self.seed = seed
         self.rng = np.random.RandomState(seed)
-        self.initializer = tf.keras.initializers.GlorotNormal(seed=seed)
         # learning process
         self.batch_size = batch_size
         self.epoch = epochs
@@ -252,12 +253,13 @@ class DDFM:
     def _build_model(self) -> None:
         # encoder
         inputs = keras.Input(shape=(int((self.lags_input + 1) * self.data.shape[1]),))
-        if len(self.structure_encoder) > 1:
+        len_encoder = len(self.structure_encoder)
+        if len_encoder > 1:
             encoded = layers.Dense(
                 self.structure_encoder[0],
                 activation=self.link,
                 bias_initializer="zeros",
-                kernel_initializer=self.initializer,
+                kernel_initializer=tf.keras.initializers.GlorotNormal(seed=self.seed),
             )(inputs)
             for c, j in enumerate(self.structure_encoder[1:]):
                 if self.batch_norm:
@@ -266,18 +268,21 @@ class DDFM:
                     j,
                     activation=(
                         self.link
-                        if self.structure_decoder is None
-                        or c != len(self.structure_encoder) - 2
+                        if self.structure_decoder is None or c != len_encoder - 2
                         else None
                     ),
-                    kernel_initializer=self.initializer,
+                    kernel_initializer=tf.keras.initializers.GlorotNormal(
+                        seed=self.seed + c + 1
+                    ),
                     bias_initializer="zeros",
                 )(encoded)
         else:
             encoded = layers.Dense(
                 self.structure_encoder[0],
                 bias_initializer="zeros",
-                kernel_initializer=self.initializer,
+                kernel_initializer=tf.keras.initializers.GlorotNormal(
+                    seed=self.seed + 1
+                ),
             )(inputs)
 
         self.encoder = keras.Model(inputs, encoded)
@@ -287,39 +292,47 @@ class DDFM:
             decoded = layers.Dense(
                 self.structure_decoder[0],
                 activation=self.link,
-                kernel_initializer=self.initializer,
+                kernel_initializer=tf.keras.initializers.GlorotNormal(
+                    seed=self.seed + len_encoder + 1
+                ),
                 bias_initializer="zeros",
             )(latent_inputs)
-            for j in self.structure_decoder[1:]:
+            for c,j in enumerate(self.structure_decoder[1:]):
                 decoded = layers.Dense(
                     j,
                     activation=self.link,
-                    kernel_initializer=self.initializer,
+                    kernel_initializer=tf.keras.initializers.GlorotNormal(
+                        seed=self.seed + len_encoder + 2 + c
+                    ),
                     bias_initializer="zeros",
                 )(decoded)
             output = layers.Dense(
                 self.data.shape[1],
                 bias_initializer="zeros",
-                kernel_initializer=self.initializer,
+                kernel_initializer=tf.keras.initializers.GlorotNormal(
+                    seed=self.seed + len_encoder + 2 + len(self.structure_decoder)
+                ),
                 use_bias=self.use_bias,
             )(decoded)
         else:
             output = layers.Dense(
                 self.data.shape[1],
                 bias_initializer="zeros",
-                kernel_initializer=self.initializer,
+                kernel_initializer=tf.keras.initializers.GlorotNormal(
+                    seed=self.seed + len_encoder + 1
+                ),
                 use_bias=self.use_bias,
             )(latent_inputs)
         self.decoder = keras.Model(latent_inputs, output)
         outputs_ = self.decoder(self.encoder(inputs))
         # autoencoder
         self.autoencoder = keras.Model(inputs, outputs_)
-        if self.jointly_est_var:
+        if self.var_loss_weight > 0:
             self.var_layer = VARLayerClosedForm(
                 n_vars=self.structure_encoder[-1], var_order=self.factor_order
             )
             self.var_autoencoder = VARAutoencoder(
-                self.encoder, self.var_layer, self.decoder, ae_loss=mse_missing
+                self.encoder, self.var_layer, self.decoder, ae_loss=mse_missing, var_loss_weight=self.var_loss_weight
             )
 
     def _build_inputs(self, interpolate: bool = True) -> None:
@@ -344,6 +357,7 @@ class DDFM:
             epochs=self.epoch * mult_epoch_pre,
             batch_size=self.batch_size,
             verbose=0,
+            shuffle=False,
         )
 
     def _train(self) -> None:
@@ -355,7 +369,7 @@ class DDFM:
         # construct initial input data
         self._build_inputs()
         # if jointly estimate var
-        if self.jointly_est_var:
+        if self.var_loss_weight > 0:
             factors = self.encoder.predict(self._data_tmp.values)
             self.var_layer.update_weights_closed_form(factors)
         prediction_iter = self.autoencoder.predict(self._data_tmp.values)
@@ -371,7 +385,7 @@ class DDFM:
         T, D = self._data_tmp.shape[0], self.data.shape[1]
         fit_method = (
             self._fit_method_var_ae(T, D)
-            if self.jointly_est_var
+            if self.var_loss_weight > 0
             else self._fit_method_ae(T, D)
         )
         while not_converged and self.i_iter < self.max_iter:
@@ -402,7 +416,7 @@ class DDFM:
             prediction_iter = tf.reduce_mean(
                 tf.reshape(self.decoder(factors_ae_sims), (self.epoch, T, D)), axis=0
             ).numpy()
-            if self.jointly_est_var:
+            if self.var_loss_weight > 0:
                 z_latent = tf.reduce_mean(
                     tf.reshape(factors_ae_sims, (self.epoch, T, self.var_layer.n_vars)),
                     axis=0,
