@@ -100,14 +100,11 @@ class DDFM:
             learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(
                 learning_rate, decay_steps=epochs, decay_rate=0.96, staircase=True
             )
-        if optimizer == "SGD":
-            self.optimizer = keras.optimizers.SGD(learning_rate=learning_rate)
-        elif optimizer == "Adam":
-            self.optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
-        else:
-            raise KeyError("Optimizer must be SGD or Adam")
+        self.optimizer = optimizer
+        self.learning_rate = learning_rate
         self.logger = logger
         # initialize relevant attributes
+        self._optimizer = None
         self.data = None
         self.variable_order = None
         self.mean_data = None
@@ -116,7 +113,7 @@ class DDFM:
         self.autoencoder = None
         self.encoder = None
         self.decoder = None
-        self.eps = None
+        self.idio_residuals = None
         self.last_neurons = None
         self.factors_ae = None
         self.factors_filtered = None
@@ -206,8 +203,6 @@ class DDFM:
         """
         # extract common factors
         f_t = np.mean(self.factors_ae, axis=0)
-        # idio components
-        eps_t = self.eps
         # get params from decoder (measurement equation)
         bs, H = convert_decoder_to_numpy(
             self.decoder,
@@ -217,10 +212,10 @@ class DDFM:
         )
         # get transition equation params
         F, Q, mu_0, sigma_0, x_t = get_transition_params(
-            f_t, eps_t, factor_order=self.factor_order, bool_no_miss=self._bool_no_miss
+            f_t, self.idio_residuals, factor_order=self.factor_order, bool_no_miss=self._bool_no_miss
         )
         self._latents["ae_states"] = x_t
-        R = np.eye(eps_t.shape[1]) * 1e-15
+        R = np.eye(self.idio_residuals.shape[1]) * 1e-15
         measurement = {
             "observation_matrices": H,
             "observation_covariance": R,
@@ -235,18 +230,29 @@ class DDFM:
             filter_type=self._filter_type,
         )
 
+    def _init_optimizer(self):
+        if self.optimizer == "SGD":
+            self._optimizer = keras.optimizers.SGD(learning_rate=self.learning_rate)
+        elif self.optimizer == "Adam":
+            self._optimizer = keras.optimizers.Adam(learning_rate=self.learning_rate)
+        else:
+            raise KeyError("Optimizer must be SGD or Adam")
+
+
     def _training_data_set_up(self, data: pd.DataFrame) -> None:
         data.sort_index(inplace=True)
         self.variable_order = data.columns
         self.mean_data = data.mean().values
         self.sigma_data = data.std().values
+        if np.any(self.sigma_data == 0):
+            raise ValueError("Some variables have zero variance.")
         self.data = (data - self.mean_data) / self.sigma_data
         # keep track of missing
         self._bool_miss = self.data.isnull()[self.lags_input :].values
         self._bool_no_miss = ~self._bool_miss
         # create two copies of the original data which will be modified during training
         # (missing data imputation and idiosyncratic one side filtering)
-        self._data_mod_only_miss, self._data_mod = self.data.copy(), self.data.copy()
+        self._data_imputed, self._data_mod = self.data.copy(), self.data.copy()
         self._target = self.data[self.lags_input :].values
         self._target_tf = tf.convert_to_tensor(self._target, dtype=tf.float32)
 
@@ -345,6 +351,8 @@ class DDFM:
         )
 
     def _pre_train(self, min_obs: int = 50, mult_epoch_pre: int = 1) -> None:
+        self._init_optimizer()
+        self.autoencoder.compile(optimizer=self._optimizer, loss="mse")
         # build inputs without interpolation
         self._build_inputs(interpolate=False)
         # check number of observations, and if not enough then interpolate
@@ -353,7 +361,6 @@ class DDFM:
         else:
             self._build_inputs()
             inpt_pre_train = self._data_tmp.dropna().values
-        self.autoencoder.compile(optimizer=self.optimizer, loss="mse")
         oupt_pre_train = self._data_tmp.dropna()[self.variable_order].values
         self.autoencoder.fit(
             inpt_pre_train,
@@ -369,7 +376,8 @@ class DDFM:
         Algorithm 1 of the paper.
         """
         # re-compile the autoencoder to re-init the optimizer
-        self.autoencoder.compile(optimizer=self.optimizer, loss=mse_missing)
+        self._init_optimizer()
+        self.autoencoder.compile(optimizer=self._optimizer, loss=mse_missing)
         # construct initial input data
         self._build_inputs()
         # if jointly estimate var
@@ -378,11 +386,11 @@ class DDFM:
             self.var_layer.update_weights_closed_form(factors)
         prediction_iter = self.autoencoder.predict(self._data_tmp.values)
         # update missing
-        self._data_mod_only_miss.values[self.lags_input :][self._bool_miss] = (
+        self._data_imputed.values[self.lags_input:][self._bool_miss] = (
             prediction_iter[self._bool_miss]
         )
         # idiosyncratic term
-        self.eps = self._data_mod_only_miss.values[self.lags_input :] - prediction_iter
+        self.idio_residuals = self._data_imputed.values[self.lags_input:] - prediction_iter
         # start MCMC iterations
         self.i_iter = 0
         not_converged = True
@@ -395,25 +403,26 @@ class DDFM:
         while not_converged and self.i_iter < self.max_iter:
             # get idio distribution
             phi, mu_eps, std_eps = get_idio(
-                self.eps, self._bool_no_miss, force_zero_mean=True
+                self.idio_residuals, self._bool_no_miss, force_zero_mean=True
             )
             # subtract conditional AR-idio mean from x
             self._data_mod[self.lags_input + 1 :] = (
-                self._data_mod_only_miss[self.lags_input + 1 :] - self.eps[:-1, :] @ phi
+                    self._data_imputed[self.lags_input + 1:] - self.idio_residuals[:-1, :] @ phi
             )
             # for first observations set to 0 the idio
-            self._data_mod[: self.lags_input + 1] = self._data_mod_only_miss[
+            self._data_mod[: self.lags_input + 1] = self._data_imputed[
                 : self.lags_input + 1
             ]
             # gen data_tmp from _data_mod
             self._build_inputs(interpolate=False)
             # gen MC samples for idio (dims = Sim x T * D)
-            eps_draws = self.rng.multivariate_normal(
+            idio_residuals_sims = self.rng.multivariate_normal(
                 mu_eps, np.diag(std_eps**2), self.epochs * T
             )
+            # memory intensive, could be converted to a loop if memory is an issue - or reduce epochs
             x_sim_noisy = np.tile(self._data_tmp.values, (self.epochs, 1))
             # Column order: [y_t, y_{t-1}, ..., y_{t-lags}]
-            x_sim_noisy[:, :D] -= eps_draws
+            x_sim_noisy[:, :D] -= idio_residuals_sims
             x_sim_noisy = tf.convert_to_tensor(x_sim_noisy, dtype=tf.float32)
             fit_method(x_sim_noisy)
             # update factors: average over all predictions from the MC samples
@@ -447,7 +456,7 @@ class DDFM:
                 delta = (
                     2
                     * np.abs(self.loss_now - loss_prev)
-                    / (np.abs(self.loss_now) + np.abs(loss_prev))
+                    / (np.abs(self.loss_now) + np.abs(loss_prev) + 1e-12)
                 )
                 if self.i_iter % self.disp == 0:
                     self.logger.info(
@@ -459,12 +468,12 @@ class DDFM:
                         f"Convergence achieved in {self.i_iter} iterations - new loss: {self.loss_now} - delta: {delta} < {self.tolerance}"
                     )
             # update missings
-            self._data_mod_only_miss.values[self.lags_input :][self._bool_miss] = (
+            self._data_imputed.values[self.lags_input:][self._bool_miss] = (
                 prediction_iter[self._bool_miss]
             )
             # update idio
-            self.eps = (
-                self._data_mod_only_miss.values[self.lags_input :] - prediction_iter
+            self.idio_residuals = (
+                    self._data_imputed.values[self.lags_input:] - prediction_iter
             )
             loss_prev = self.loss_now
             self.i_iter += 1
@@ -530,7 +539,7 @@ class DDFM:
                             tf.slice(self._target_tf, [i, 0], [size_i, -1]), prediction
                         )
                     grads = tape.gradient(loss_value, vars_)
-                    self.optimizer.apply_gradients(zip(grads, vars_))
+                    self._optimizer.apply_gradients(zip(grads, vars_))
 
         return train_all_epochs
 
@@ -562,6 +571,6 @@ class DDFM:
                             )
                         )
                     grads = tape.gradient(total_loss, vars_)
-                    self.optimizer.apply_gradients(zip(grads, vars_))
+                    self._optimizer.apply_gradients(zip(grads, vars_))
 
         return train_all_epochs
