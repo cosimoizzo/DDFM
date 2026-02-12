@@ -1,5 +1,51 @@
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import List
+
 import numpy as np
 from sklearn.preprocessing import PolynomialFeatures
+
+
+class AggregationInstr(StrEnum):
+    MM = "MarianoMurasawa"
+
+
+@dataclass
+class QuarterlyVars:
+    idxs: List[int]
+    aggregation: AggregationInstr = AggregationInstr.MM
+
+    def aggregate(self, x: np.ndarray) -> np.ndarray:
+        """
+        x is T x N with aggregation over T
+        """
+        mask = np.tile(np.array([np.nan, np.nan, 1]), int(np.ceil(x.shape[0] / 3)))[
+            : x.shape[0]
+        ]
+        if self.aggregation == AggregationInstr.MM:
+            window = np.stack(
+                [x[4:, self.idxs]] + [x[4 - i : -i, self.idxs] for i in range(1, 5)]
+            )
+            x[4:, self.idxs] = np.einsum(
+                "lti,l -> ti", window, np.array([1, 2, 3, 2, 1])
+            )
+            x[:, self.idxs] *= mask[:, None]
+            x[:4, self.idxs] = np.nan
+        return x
+
+    def _aggregate_slow(self, x: np.ndarray) -> np.ndarray:
+        if self.aggregation == AggregationInstr.MM:
+            aggregation_mm = np.array([1, 2, 3, 2, 1])
+            mask = np.tile(np.array([np.nan, np.nan, 1]), int(np.ceil(x.shape[0] / 3)))[
+                4 : x.shape[0]
+            ]
+            for idx in self.idxs:
+                window = np.hstack(
+                    [x[4:, [idx]]] + [x[4 - i : -i, [idx]] for i in range(1, 5)]
+                )
+                x[4:, idx] = mask * (window @ aggregation_mm)
+            x[:4, self.idxs] = np.nan
+        return x
 
 
 class SIMULATE(object):
@@ -8,7 +54,7 @@ class SIMULATE(object):
     "Banbura, Marta and Modugno, Michele, Maximum Likelihood Estimation of Factor Models on Data Sets with Arbitrary
     Pattern of Missing Data (April 30, 2010). ECB Working Paper No. 1189, Available at
     SSRN: https://ssrn.com/abstract=1598302"
-    Augmented with polynomial and sign factors.
+    Augmented with quarterly observables, polynomial and sign factors
     """
 
     def __init__(
@@ -49,16 +95,23 @@ class SIMULATE(object):
         self.linear_f = None
         self.f = None
 
-    def simulate(self, t_obs: int, portion_missings: float = 0.0) -> np.ndarray:
+    def simulate(
+        self,
+        t_obs: int,
+        portion_missings: float = 0.0,
+        quarterly_vars: QuarterlyVars = None,
+    ) -> np.ndarray:
         """
         Simulate data.
         Args:
             t_obs: number of observations to simulate
             portion_missings: portion of missing data
+            quarterly_vars:
 
         Returns:
             the simulated observable variables
         """
+        assert 0 <= portion_missings < 1, "Portion Missing should be between 0 and 1"
         # common factors
         u_t = self.rng.multivariate_normal(np.zeros(self.r), np.identity(self.r), t_obs)
         A = np.diag(self.rho * np.ones(self.r))
@@ -102,10 +155,12 @@ class SIMULATE(object):
         # gen observables
         x = f @ Lambda.T + eps
         self.f = f
+        if quarterly_vars:
+            x = quarterly_vars.aggregate(x)
+            portion_missings -= np.sum(np.isnan(x)) / (t_obs * self.n)
         # insert missings
-        if portion_missings > 0:
-            assert 0 < portion_missings < 1, "Portion Missing should be between 0 and 1"
-            n_missings = int(t_obs * self.n * portion_missings)
+        n_missings = int(t_obs * self.n * portion_missings)
+        if n_missings > 0:
             flat_idx = self.rng.choice(t_obs * self.n, size=n_missings, replace=False)
             rows = flat_idx // self.n
             cols = flat_idx % self.n

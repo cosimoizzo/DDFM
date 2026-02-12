@@ -1,8 +1,11 @@
-from typing import Tuple, Union
+from typing import Tuple, Union, Optional
 
 import numpy as np
 import pandas as pd
+from statsmodels.tsa.statespace._quarterly_ar1 import QuarterlyAR1
 from tensorflow import keras
+
+from tools.monthly_quarterly_layer import MixedFreqMQLayer
 
 
 def convert_decoder_to_numpy(
@@ -12,7 +15,7 @@ def convert_decoder_to_numpy(
     structure_decoder: tuple = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Convert a keras Model decoder to a numpy object
+    Convert a keras Model decoder to a numpy object, accounting for Mixed frequency layer
     Args:
         decoder: decoder, a keras Model
         has_bias: whether there is a bias term
@@ -23,34 +26,93 @@ def convert_decoder_to_numpy(
         bias and weight terms
     """
     if structure_decoder is None:
-        if has_bias:
-            ws, bs = decoder.get_layer(index=-1).get_weights()
+        return _convert_linear_decoder_to_numpy(
+            decoder=decoder, has_bias=has_bias, factor_order=factor_order
+        )
+    else:
+        raise NotImplementedError("Multilayer decoder not available yet!")
+
+
+def _convert_linear_decoder_to_numpy(
+    decoder: keras.Model,
+    has_bias: bool,
+    factor_order: int,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Convert a linear decoder to numpy arrays.
+    Used to recover the factor loadings, say dimension observable is n, then output is dimension n x k,
+        with k being equal to dimension idio and factors plus their lags.
+    """
+    last_layer = decoder.get_layer(index=-1)
+    if isinstance(last_layer, MixedFreqMQLayer):
+        last_layer = decoder.get_layer(index=-2)
+        mix_freq_layer = decoder.get_layer(index=-1)
+    else:
+        mix_freq_layer = None
+    if (
+        last_layer.activation is not None
+        and last_layer.activation != keras.activations.linear
+    ):
+        raise ValueError("Only linear layer supported.")
+    if has_bias:
+        ws, bs = last_layer.get_weights()
+    else:
+        ws = last_layer.get_weights()[0]
+        bs = np.zeros(ws.shape[1])
+    # state = [f_t, f_t-1, ..., eps_t, eps_t-1, ...]
+    ws = ws.T
+    if mix_freq_layer is not None:
+        idio_loadings = np.eye(ws.shape[0])
+        ws = np.hstack(
+            (
+                np.vstack(
+                    (
+                        np.kron(
+                            np.array([1, 0, 0, 0, 0]),
+                            ws[: mix_freq_layer.start_quarterly, :],
+                        ),
+                        np.kron(
+                            np.array(mix_freq_layer.aggr_restr),
+                            ws[mix_freq_layer.start_quarterly :, :],
+                        ),
+                    )
+                ),
+                # TODO: consider adding lags only for idio of quarterly variables
+                np.vstack(
+                    (
+                        np.kron(
+                            np.array([1, 0, 0, 0, 0]),
+                            idio_loadings[: mix_freq_layer.start_quarterly, :],
+                        ),
+                        np.kron(
+                            np.array(mix_freq_layer.aggr_restr),
+                            idio_loadings[mix_freq_layer.start_quarterly :, :],
+                        ),
+                    )
+                ),
+            )
+        )
+    else:
+        if factor_order == 1:
+            ws = np.hstack((ws, np.eye(ws.shape[0])))  # weight term  # idio
         else:
-            ws = decoder.get_layer(index=-1).get_weights()[0]
-            bs = np.zeros(ws.shape[1])
-        if factor_order == 2:
             ws = np.hstack(
                 (
-                    ws.T,  # weight term
-                    np.zeros((ws.shape[1], ws.shape[0])),  # make zero lagged values
-                    np.identity(ws.shape[1]),  # idio
+                    np.kron(np.array([1] + [0] * (factor_order - 1)), ws),
+                    # only one lag for the idio
+                    np.eye(ws.shape[0]),
                 )
             )
-        elif factor_order == 1:
-            ws = np.hstack((ws.T, np.identity(ws.shape[1])))  # weight term  # idio
-        else:
-            raise NotImplementedError(
-                "Only VAR(2) or VAR(1) for common factors at the moment."
-            )
-    else:
-        raise NotImplementedError("Nonlinear decoder not available yet!")
-
     return bs, ws
 
 
 def get_transition_params(
-    f_t: np.ndarray, eps_t: np.ndarray, factor_order: int, bool_no_miss: np.ndarray
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    f_t: np.ndarray,
+    eps_t: np.ndarray,
+    factor_order: int,
+    bool_no_miss: np.ndarray,
+    extended_factor_lags: int = 0,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Calculate transition parameters.
     Args:
@@ -58,110 +120,111 @@ def get_transition_params(
         eps_t: idiosyncratic terms
         factor_order: lag order for the common factors
         bool_no_miss: array to keep track of non-missing values
+        extended_factor_lags: how many factor lags to add in the state representation on top of factor_order (hence,
+            total number of lags is factor_order + extended_factor_lags)
 
     Returns:
         autoregressive matrix, diagonal residual covariance matrix, unconditional mean, unconditional variance,
-            latent states
+            latent states (k x T)
     """
-    if factor_order == 2:
-        f_past = np.hstack((f_t[1:-1, :], f_t[:-2, :]))
-        A_f = np.linalg.lstsq(f_past, f_t[2:, :], rcond=None)[0].T
-    elif factor_order == 1:
-        f_past = f_t[:-1, :]
-        A_f = np.linalg.lstsq(f_past, f_t[1:, :], rcond=None)[0].T
-    else:
-        raise NotImplementedError(
-            "Only VAR(2) or VAR(1) for common factors at the moment."
-        )
-    # get AR coeffs. from idiosyncratic
+    if factor_order < 1:
+        raise ValueError("factor_order must be >= 1")
+    T, n_f = f_t.shape
+    n_eps = eps_t.shape[1]
+    p = factor_order
+    X_f = np.hstack([f_t[p - j - 1 : T - j, :] for j in range(p)])
+    A_f = np.linalg.lstsq(X_f[:-1], f_t[p:, :], rcond=None)[0].T
     A_eps, _, _ = get_idio(eps_t, bool_no_miss)
-    # companion form x_t = [f_t, f_t_1, eps_t]
-    if factor_order == 2:
-        x_t = np.vstack((f_t[1:, :].T, f_t[:-1, :].T, eps_t[1:, :].T))
-        A = np.vstack(
-            (
-                np.hstack(
-                    (A_f, np.zeros((A_f.shape[0], eps_t.shape[1])))
-                ),  # VAR factors
-                np.hstack(
-                    (
-                        np.identity(A_f.shape[0]),
-                        np.zeros((A_f.shape[0], A_f.shape[0] + eps_t.shape[1])),
-                    )
-                ),
-                np.hstack(
-                    (np.zeros((eps_t.shape[1], A_f.shape[1])), A_eps)
-                ),  # AR 1 idio
-            )
+    # if extended factor lags is larger than zero, then we add lags also to the idiosyncratic
+    # TODO: if we add extended lags only to idio quarterly, then this would need to change
+    state_dim = (p + extended_factor_lags) * n_f + n_eps * (
+        1 + (p + extended_factor_lags - 1) * (extended_factor_lags > 0)
+    )
+    A = np.zeros((state_dim, state_dim))
+    # VAR in companion form plus idios
+    A[:n_f, : p * n_f] = A_f
+    start_idx_idio = (p + extended_factor_lags) * n_f
+    A[
+        start_idx_idio : start_idx_idio + n_eps, start_idx_idio : start_idx_idio + n_eps
+    ] = A_eps
+    for i in range(1, p + extended_factor_lags):
+        A[i * n_f : (i + 1) * n_f, (i - 1) * n_f : i * n_f] = np.eye(n_f)
+        if extended_factor_lags > 0:
+            A[
+                start_idx_idio + i * n_eps : start_idx_idio + (i + 1) * n_eps,
+                start_idx_idio + (i - 1) * n_eps : start_idx_idio + i * n_eps,
+            ] = np.eye(n_eps)
+    # companion form x_t = [f_t, f_t_1, ..., eps_t, eps_t-1, ...]
+    if extended_factor_lags > 0:
+        X_f = np.hstack(
+            [
+                f_t[p + extended_factor_lags - j - 1 : T - j, :]
+                for j in range(p + extended_factor_lags)
+            ]
         )
-    elif factor_order == 1:
-        x_t = np.vstack((f_t.T, eps_t.T))
-        A = np.vstack(
-            (
-                np.hstack(
-                    (A_f, np.zeros((A_f.shape[0], eps_t.shape[1])))
-                ),  # VAR factors
-                np.hstack(
-                    (np.zeros((eps_t.shape[1], A_f.shape[1])), A_eps)
-                ),  # AR 1 idio
-            )
+        X_eps = np.hstack(
+            [
+                eps_t[p + extended_factor_lags - j - 1 : T - j, :]
+                for j in range(p + extended_factor_lags)
+            ]
         )
+        x_t = np.vstack((X_f.T, X_eps.T))
     else:
-        raise NotImplementedError(
-            "Only VAR(2) or VAR(1) for common factors at the moment."
-        )
+        x_t = np.vstack((X_f.T, eps_t[p - 1 :].T))
     # error term matrix
     w_t = x_t[:, 1:] - A @ x_t[:, :-1]
     W = np.diag(np.diag(np.cov(w_t)))
-    # Set to unconditional moments of x_0 = [f_0, f_0_1, eps_0]
-    mu_0 = np.mean(x_t, axis=1)
-    Σ_0 = np.cov(x_t)
-    # zero correlation with idiosyncratic and diagonal covariance among them
-    Σ_0[: A_f.shape[1], A_f.shape[1] :] = 0
-    Σ_0[A_f.shape[1] :, : A_f.shape[1]] = 0
-    Σ_0[A_f.shape[1] :, A_f.shape[1] :] = np.diag(
-        np.diag(Σ_0[A_f.shape[1] :, A_f.shape[1] :])
-    )
-    return A, W, mu_0, Σ_0, x_t
+    return A, W, x_t
 
 
 def get_idio(
     eps: np.ndarray,
     idx_no_missings: np.ndarray,
     min_obs: int = 5,
-    force_zero_mean: bool = True,
+    quarterly_start: Optional[int] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Compute statistics from idiosyncratic terms: AR(1), mean, stds
+    Compute statistics from idiosyncratic terms
+    Note: mixed estimation, quarterly in SS while others not.
+
     Args:
-        eps: idiosyncratic AR(1)s
+        eps: idiosyncratic zero mean AR(1)s
         idx_no_missings: array to keep track of non-missing values
         min_obs: minimum number of observations to estimate the statistics
-        force_zero_mean: whether to force zero unconditional mean
+        quarterly_start: if flow quarterly idio AR1s are present, specify index start
 
     Returns:
-        autoregressive coefficients, unconditional mean and standard deviation
+        autoregressive coefficients, unconditional standard deviation, conditional mean 1 step ahead
     """
     # init params statistics
     phi = np.zeros((eps.shape[1], eps.shape[1]))
-    mu_eps = np.zeros(eps.shape[1])
-    std_eps = np.zeros(eps.shape[1])
+    std_eps = np.nanstd(eps, ddof=1, axis=0)
     # loop over idios
-    for j in range(eps.shape[1]):
-        to_select = idx_no_missings[:, j]  # ~np.isnan(self.z_actual[:, j])
-        to_select = np.hstack((np.array([False]), to_select[:-1] * to_select[1:]))
+    cond_mean = np.zeros_like(eps)
+    end_nn_quarterly = quarterly_start if quarterly_start is not None else eps.shape[1]
+    for j in range(end_nn_quarterly):
+        to_select = np.r_[False, idx_no_missings[:-1, j] & idx_no_missings[1:, j]]
         if np.sum(to_select) >= min_obs:
             this_eps = eps[to_select, j]
         else:
             raise ValueError(
                 f"Not enough observation ({min_obs}) to estimate idio AR(1) parameters."
             )
-        if not force_zero_mean:
-            mu_eps[j] = np.mean(this_eps)
-        std_eps[j] = np.std(this_eps, ddof=1)
-        cov1_eps = np.cov(this_eps[1:], this_eps[:-1])[0][1]
-        phi[j, j] = np.clip(cov1_eps / (std_eps[j] ** 2), -0.99, 0.99)
-    return phi, mu_eps, std_eps
+        cov_eps = np.cov(this_eps[1:], this_eps[:-1])
+        phi[j, j] = np.clip(
+            cov_eps[0, 1] / ((cov_eps[0, 0] * cov_eps[1, 1]) ** 0.5), -0.99, 0.99
+        )
+        cond_mean[:, j] = phi[j, j] * eps[:, j]
+    for j in range(end_nn_quarterly, eps.shape[1]):
+        mod_idio_qmm = QuarterlyAR1(eps[:, j])
+        res_idio_qmm = mod_idio_qmm.fit(maxiter=50, return_params=True, disp=False)
+        res_idio_qmm = mod_idio_qmm.fit_em(res_idio_qmm, maxiter=50, return_params=True)
+        res = mod_idio_qmm._em_expectation_step(res_idio_qmm)
+        cond_mean[:, [j]] = (
+            res.smoothed_state.T @ res.transition[..., 0] @ res.design[0, ...]
+        )
+        phi[j, j] = np.clip(res_idio_qmm[0], -0.99, 0.99)
+    return phi, std_eps, cond_mean
 
 
 def get_data_with_lags(

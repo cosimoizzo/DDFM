@@ -1,5 +1,5 @@
 import logging
-from typing import Tuple
+from typing import Tuple, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -16,6 +16,7 @@ from tools.getters_converters_tools import (
     get_idio,
     get_data_with_lags,
 )
+from tools.monthly_quarterly_layer import MixedFreqMQLayer
 
 # tf.config.run_functions_eagerly(True)
 
@@ -104,6 +105,7 @@ class DDFM:
         self.learning_rate = learning_rate
         self.logger = logger
         # initialize relevant attributes
+        self.quarterly_start = None
         self._optimizer = None
         self.data = None
         self.variable_order = None
@@ -121,17 +123,28 @@ class DDFM:
         self.state_space = None
         self._latents = {}
 
-    def fit(self, data: pd.DataFrame, build_state_space: bool = False) -> None:
+    def fit(
+        self,
+        data: pd.DataFrame,
+        build_state_space: bool = False,
+        vars_mq_restrictions: List[str] = None,
+    ) -> None:
         """
         Model fitting
         Args:
             data: data for training
             build_state_space: whether to build the final state space representation for model inference
+            vars_mq_restrictions: list of quarterly variables where monthly to quarterly aggregation restrictions are
+                applied (the quarterly variable is assumed to be a flow variable)
 
         Returns:
             None, it updates internal attributes and makes the model ready for inference
         """
-        self._training_data_set_up(data)
+        self._training_data_set_up(data, vars_mq_restrictions)
+        quarterly_start = (
+            data.shape[1] - len(vars_mq_restrictions) if vars_mq_restrictions else None
+        )
+        self.quarterly_start = quarterly_start
         self._build_model()
         self._pre_train()
         self._train()
@@ -211,8 +224,21 @@ class DDFM:
             structure_decoder=self.structure_decoder,
         )
         # get transition equation params
-        F, Q, mu_0, sigma_0, x_t = get_transition_params(
-            f_t, self.idio_residuals, factor_order=self.factor_order, bool_no_miss=self._bool_no_miss
+        lags_needed = (
+            len(self.decoder.get_layer(index=-1).aggr_restr)
+            if self.quarterly_start is not None
+            else None
+        )
+        F, Q, x_t = get_transition_params(
+            f_t,
+            self.idio_residuals,
+            factor_order=self.factor_order,
+            bool_no_miss=self._bool_no_miss,
+            extended_factor_lags=(
+                max(0, lags_needed - self.factor_order)
+                if lags_needed is not None
+                else 0
+            ),
         )
         self._latents["ae_states"] = x_t
         R = np.eye(self.idio_residuals.shape[1]) * 1e-15
@@ -238,8 +264,14 @@ class DDFM:
         else:
             raise KeyError("Optimizer must be SGD or Adam")
 
-
-    def _training_data_set_up(self, data: pd.DataFrame) -> None:
+    def _training_data_set_up(
+        self, data: pd.DataFrame, vars_mq_restrictions: List[str] = None
+    ) -> None:
+        if vars_mq_restrictions is not None:
+            vars_order = [
+                v for v in data.columns if v not in vars_mq_restrictions
+            ] + vars_mq_restrictions
+            data = data[vars_order]
         data.sort_index(inplace=True)
         self.variable_order = data.columns
         self.mean_data = data.mean().values
@@ -329,6 +361,9 @@ class DDFM:
                 ),
                 use_bias=self.use_bias,
             )(latent_inputs)
+        # If quarterly variables present, then add MM restrictions
+        if self.quarterly_start is not None:
+            output = MixedFreqMQLayer(self.data.shape[1], self.quarterly_start)(output)
         self.decoder = keras.Model(latent_inputs, output)
         outputs_ = self.decoder(self.encoder(inputs))
         # autoencoder
@@ -386,11 +421,13 @@ class DDFM:
             self.var_layer.update_weights_closed_form(factors)
         prediction_iter = self.autoencoder.predict(self._data_tmp.values)
         # update missing
-        self._data_imputed.values[self.lags_input:][self._bool_miss] = (
-            prediction_iter[self._bool_miss]
-        )
+        self._data_imputed.values[self.lags_input :][self._bool_miss] = prediction_iter[
+            self._bool_miss
+        ]
         # idiosyncratic term
-        self.idio_residuals = self._data_imputed.values[self.lags_input:] - prediction_iter
+        self.idio_residuals = (
+            self._data_imputed.values[self.lags_input :] - prediction_iter
+        )
         # start MCMC iterations
         self.i_iter = 0
         not_converged = True
@@ -402,12 +439,14 @@ class DDFM:
         )
         while not_converged and self.i_iter < self.max_iter:
             # get idio distribution
-            phi, mu_eps, std_eps = get_idio(
-                self.idio_residuals, self._bool_no_miss, force_zero_mean=True
+            phi, std_eps, cond_mean = get_idio(
+                self.idio_residuals,
+                self._bool_no_miss,
+                quarterly_start=self.quarterly_start,
             )
             # subtract conditional AR-idio mean from x
             self._data_mod[self.lags_input + 1 :] = (
-                    self._data_imputed[self.lags_input + 1:] - self.idio_residuals[:-1, :] @ phi
+                self._data_imputed[self.lags_input + 1 :] - cond_mean[:-1]
             )
             # for first observations set to 0 the idio
             self._data_mod[: self.lags_input + 1] = self._data_imputed[
@@ -417,7 +456,7 @@ class DDFM:
             self._build_inputs(interpolate=False)
             # gen MC samples for idio (dims = Sim x T * D)
             idio_residuals_sims = self.rng.multivariate_normal(
-                mu_eps, np.diag(std_eps**2), self.epochs * T
+                np.zeros_like(std_eps), np.diag(std_eps**2), self.epochs * T
             )
             # memory intensive, could be converted to a loop if memory is an issue - or reduce epochs
             x_sim_noisy = np.tile(self._data_tmp.values, (self.epochs, 1))
@@ -468,12 +507,12 @@ class DDFM:
                         f"Convergence achieved in {self.i_iter} iterations - new loss: {self.loss_now} - delta: {delta} < {self.tolerance}"
                     )
             # update missings
-            self._data_imputed.values[self.lags_input:][self._bool_miss] = (
+            self._data_imputed.values[self.lags_input :][self._bool_miss] = (
                 prediction_iter[self._bool_miss]
             )
             # update idio
             self.idio_residuals = (
-                    self._data_imputed.values[self.lags_input:] - prediction_iter
+                self._data_imputed.values[self.lags_input :] - prediction_iter
             )
             loss_prev = self.loss_now
             self.i_iter += 1

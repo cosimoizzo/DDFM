@@ -9,6 +9,8 @@ class MixedFreqMQLayer(keras.layers.Layer):
 
     def __init__(self, input_dim: int, start_quarterly: int):
         super().__init__()
+        self.start_quarterly = start_quarterly
+        self.aggr_restr = [1, 2, 3, 2, 1]
         mm_mq = tf.concat(
             [
                 tf.concat(
@@ -25,11 +27,15 @@ class MixedFreqMQLayer(keras.layers.Layer):
                         * tf.eye(
                             start_quarterly, num_columns=input_dim - start_quarterly
                         ),
-                        1 * tf.eye(input_dim, num_columns=input_dim - start_quarterly),
-                        2 * tf.eye(input_dim, num_columns=input_dim - start_quarterly),
-                        3 * tf.eye(input_dim, num_columns=input_dim - start_quarterly),
-                        2 * tf.eye(input_dim, num_columns=input_dim - start_quarterly),
-                        1
+                        self.aggr_restr[0]
+                        * tf.eye(input_dim, num_columns=input_dim - start_quarterly),
+                        self.aggr_restr[1]
+                        * tf.eye(input_dim, num_columns=input_dim - start_quarterly),
+                        self.aggr_restr[2]
+                        * tf.eye(input_dim, num_columns=input_dim - start_quarterly),
+                        self.aggr_restr[3]
+                        * tf.eye(input_dim, num_columns=input_dim - start_quarterly),
+                        self.aggr_restr[4]
                         * tf.eye(
                             input_dim - start_quarterly,
                             num_columns=input_dim - start_quarterly,
