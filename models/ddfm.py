@@ -1,5 +1,5 @@
 import logging
-from typing import Tuple, List, Optional
+from typing import Tuple, List, Optional, Any
 
 import numpy as np
 import pandas as pd
@@ -40,6 +40,7 @@ class DDFM:
         learning_rate: float = 0.005,
         optimizer: str = "Adam",
         decay_learning_rate: bool = True,
+        clipnorm: Optional[float] = None,
         epochs: int = 150,
         batch_size: int = 250,
         max_iter: int = 200,
@@ -64,6 +65,7 @@ class DDFM:
             learning_rate: the learning rate for the optimizer
             optimizer: the selected optimizer
             decay_learning_rate: whether to use a decaying learning rate
+            clipnorm: whether to clip gradient norm
             epochs: number of epochs between iterations
             batch_size: the size of the batch
             max_iter: maximum number of iterations
@@ -103,6 +105,7 @@ class DDFM:
             )
         self.optimizer = optimizer
         self.learning_rate = learning_rate
+        self.clipnorm = clipnorm
         self.logger = logger
         # initialize relevant attributes
         self.quarterly_start = None
@@ -127,7 +130,7 @@ class DDFM:
         self,
         data: pd.DataFrame,
         build_state_space: bool = False,
-        vars_mq_restrictions: List[str] = None,
+        vars_mq_restrictions: List[Any] = None,
     ) -> None:
         """
         Model fitting
@@ -239,6 +242,7 @@ class DDFM:
                 if lags_needed is not None
                 else 0
             ),
+            quarterly_start=self.quarterly_start,
         )
         self._latents["ae_states"] = x_t
         R = np.eye(self.idio_residuals.shape[1]) * 1e-15
@@ -258,9 +262,9 @@ class DDFM:
 
     def _init_optimizer(self):
         if self.optimizer == "SGD":
-            self._optimizer = keras.optimizers.SGD(learning_rate=self.learning_rate)
+            self._optimizer = keras.optimizers.SGD(learning_rate=self.learning_rate, clipnorm=self.clipnorm)
         elif self.optimizer == "Adam":
-            self._optimizer = keras.optimizers.Adam(learning_rate=self.learning_rate)
+            self._optimizer = keras.optimizers.Adam(learning_rate=self.learning_rate, clipnorm=self.clipnorm)
         else:
             raise KeyError("Optimizer must be SGD or Adam")
 

@@ -11,65 +11,32 @@ class MixedFreqMQLayer(keras.layers.Layer):
         super().__init__()
         self.start_quarterly = start_quarterly
         self.aggr_restr = [1, 2, 3, 2, 1]
-        mm_mq = tf.concat(
-            [
-                tf.concat(
-                    [
-                        tf.eye(start_quarterly),
-                        tf.zeros((5 * input_dim - start_quarterly, start_quarterly)),
-                    ],
-                    axis=0,
-                ),
-                # monthly to quarterly aggregation
-                tf.concat(
-                    [
-                        0
-                        * tf.eye(
-                            start_quarterly, num_columns=input_dim - start_quarterly
-                        ),
-                        self.aggr_restr[0]
-                        * tf.eye(input_dim, num_columns=input_dim - start_quarterly),
-                        self.aggr_restr[1]
-                        * tf.eye(input_dim, num_columns=input_dim - start_quarterly),
-                        self.aggr_restr[2]
-                        * tf.eye(input_dim, num_columns=input_dim - start_quarterly),
-                        self.aggr_restr[3]
-                        * tf.eye(input_dim, num_columns=input_dim - start_quarterly),
-                        self.aggr_restr[4]
-                        * tf.eye(
-                            input_dim - start_quarterly,
-                            num_columns=input_dim - start_quarterly,
-                        ),
-                    ],
-                    axis=0,
-                ),
-            ],
-            axis=1,
-        )
+        n_q = input_dim - start_quarterly
+        # at lag 0: same for all
+        blocks = [tf.eye(input_dim)]
+        # then only quarterly
+        for a in self.aggr_restr[1:]:
+            block = tf.concat([
+                tf.zeros((start_quarterly, input_dim)),  # monthly to zero
+                tf.concat([
+                    tf.zeros((n_q, start_quarterly)),
+                    a * tf.eye(n_q)
+                ], axis=1)
+            ], axis=0)
+            blocks.append(block)
+        mm_mq = tf.concat(blocks, axis=0)
         self.w = self.add_weight(
             shape=(input_dim * 5, input_dim),
-            initializer=lambda shape, dtype: tf.cast(mm_mq, dtype),
+            initializer=tf.keras.initializers.Constant(mm_mq),
             trainable=False,
         )
 
     def call(self, inputs):
-        return custom_op(inputs, self.w)
+        x_ext = get_input(inputs)
+        y = tf.matmul(x_ext, self.w)
+        return y
 
 
-@tf.custom_gradient
-def custom_op(x, weights):
-    x_ext = get_input(x)
-    result = tf.matmul(x_ext, weights)
-
-    def custom_grad(upstream):
-        inputs_gradient = tf.matmul(get_input(upstream), weights)
-        # weights_gradient = tf.matmul(tf.transpose(get_input(x)), get_input(upstream))
-        return inputs_gradient, None  # weights_gradient
-
-    return result, custom_grad
-
-
-@tf.function
 def get_input(inputs):
     num_lags = 5
     lags = [inputs]
@@ -84,5 +51,5 @@ def get_input(inputs):
             ],
             axis=0,
         )
-        lags.append(rolled * mask)
+        lags.append(tf.multiply(rolled, mask))
     return tf.concat(lags, axis=1)

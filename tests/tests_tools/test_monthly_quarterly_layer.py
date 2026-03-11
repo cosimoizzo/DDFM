@@ -73,15 +73,33 @@ class TestMixedFreqMQLayer(unittest.TestCase):
         model.fit(
             self.x,
             self.out_expected,
+            epochs=1,
+            batch_size=self.x.shape[0],
+            verbose=False,
+            shuffle=False,
+        )
+        weights = model.get_weights()
+        error_before_fit = np.mean(np.abs(weights[0] - np.eye(self.x.shape[1])))
+        model.fit(
+            self.x,
+            self.out_expected,
             epochs=300,
             batch_size=self.x.shape[0],
             verbose=False,
+            shuffle=False,
         )
         weights = model.get_weights()
+        error_after_fit = np.mean(np.abs(weights[0] - np.eye(self.x.shape[1])))
         # True value of the parameter of the first layer is identity matrix, checking mean absolute error below 0.05.
         self.assertLessEqual(
-            np.mean(np.abs(weights[0] - np.eye(self.x.shape[1]))),
-            0.05,
+            error_after_fit,
+            0.01,
+            msg=f"value: {weights[0]}",
+        )
+        # check lower error after full fit
+        self.assertLessEqual(
+            error_after_fit,
+            error_before_fit,
             msg=f"value: {weights[0]}",
         )
 

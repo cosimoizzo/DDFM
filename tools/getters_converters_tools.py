@@ -1,4 +1,4 @@
-from typing import Tuple, Union, Optional
+from typing import Tuple, Union, Optional, List
 
 import numpy as np
 import pandas as pd
@@ -112,6 +112,7 @@ def get_transition_params(
     factor_order: int,
     bool_no_miss: np.ndarray,
     extended_factor_lags: int = 0,
+    quarterly_start: List[int] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Calculate transition parameters.
@@ -122,6 +123,7 @@ def get_transition_params(
         bool_no_miss: array to keep track of non-missing values
         extended_factor_lags: how many factor lags to add in the state representation on top of factor_order (hence,
             total number of lags is factor_order + extended_factor_lags)
+        quarterly_start: if flow quarterly idio AR1s are present, specify index start
 
     Returns:
         autoregressive matrix, diagonal residual covariance matrix, unconditional mean, unconditional variance,
@@ -134,7 +136,7 @@ def get_transition_params(
     p = factor_order
     X_f = np.hstack([f_t[p - j - 1 : T - j, :] for j in range(p)])
     A_f = np.linalg.lstsq(X_f[:-1], f_t[p:, :], rcond=None)[0].T
-    A_eps, _, _ = get_idio(eps_t, bool_no_miss)
+    A_eps, _, _ = get_idio(eps_t, bool_no_miss, quarterly_start=quarterly_start)
     # if extended factor lags is larger than zero, then we add lags also to the idiosyncratic
     # TODO: if we add extended lags only to idio quarterly, then this would need to change
     state_dim = (p + extended_factor_lags) * n_f + n_eps * (
@@ -182,6 +184,7 @@ def get_idio(
     idx_no_missings: np.ndarray,
     min_obs: int = 5,
     quarterly_start: Optional[int] = None,
+    raise_error_if_few_obs: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute statistics from idiosyncratic terms
@@ -192,6 +195,7 @@ def get_idio(
         idx_no_missings: array to keep track of non-missing values
         min_obs: minimum number of observations to estimate the statistics
         quarterly_start: if flow quarterly idio AR1s are present, specify index start
+        raise_error_if_few_obs: whether to raise an error if the number of observations below min_obs or only warning
 
     Returns:
         autoregressive coefficients, unconditional standard deviation, conditional mean 1 step ahead
@@ -206,15 +210,24 @@ def get_idio(
         to_select = np.r_[False, idx_no_missings[:-1, j] & idx_no_missings[1:, j]]
         if np.sum(to_select) >= min_obs:
             this_eps = eps[to_select, j]
-        else:
-            raise ValueError(
-                f"Not enough observation ({min_obs}) to estimate idio AR(1) parameters."
+            cov_eps = np.cov(this_eps[1:], this_eps[:-1])
+            phi[j, j] = np.clip(
+                cov_eps[0, 1] / ((cov_eps[0, 0] * cov_eps[1, 1]) ** 0.5), -0.99, 0.99
             )
-        cov_eps = np.cov(this_eps[1:], this_eps[:-1])
-        phi[j, j] = np.clip(
-            cov_eps[0, 1] / ((cov_eps[0, 0] * cov_eps[1, 1]) ** 0.5), -0.99, 0.99
-        )
-        cond_mean[:, j] = phi[j, j] * eps[:, j]
+            cond_mean[:, j] = phi[j, j] * eps[:, j]
+        else:
+            if raise_error_if_few_obs:
+                raise ValueError(
+                    f"Not enough observation ({min_obs}) to estimate idio AR(1) parameters."
+                )
+            else:
+                # TODO: replace with warning
+                print(
+                    f"Not enough observation ({min_obs}) to estimate idio AR(1) parameters, setting to 0."
+                )
+                phi[j, j] = 0
+                cond_mean[:, j] = 0
+
     for j in range(end_nn_quarterly, eps.shape[1]):
         mod_idio_qmm = QuarterlyAR1(eps[:, j])
         res_idio_qmm = mod_idio_qmm.fit(maxiter=50, return_params=True, disp=False)
