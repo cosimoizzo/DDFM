@@ -3,7 +3,8 @@ import unittest
 import numpy as np
 from pykalman import KalmanFilter
 
-from models.state_space import KalmanFilterMod, StateSpace
+from models.state_space.state_space_wrapper import StateSpace
+from models.state_space.kf_utils import KFMod
 
 
 class TestBase(unittest.TestCase):
@@ -17,7 +18,7 @@ class TestBase(unittest.TestCase):
         cls.Q = np.eye(cls.d)
         cls.R = 0.1 * np.eye(cls.n)
 
-    def _gen_values(self, n_obs: int = 100, perc_missing: float = None):
+    def gen_values(self, n_obs: int = 100, perc_missing: float = None):
         """
         x_{t+1}  = F x_{t} + N(0, Q)
         y_{t}    = H x_{t} + N(0, R)
@@ -40,21 +41,21 @@ class TestBase(unittest.TestCase):
         return y_t, x_t
 
 
-class TestKalmanFilterMod(TestBase):
+class TestKFMod(TestBase):
 
     def test_filter(self):
         """
         Given a simulated LGSSM, check filtered states are close to extracted ones and the same of original PyKalman
         implementation.
         """
-        y_t, x_t = self._gen_values()
+        y_t, x_t = self.gen_values()
         kalman_filter = KalmanFilter(
             transition_matrices=self.F,
             observation_matrices=self.H,
             transition_covariance=self.Q,
             observation_covariance=self.R,
         )
-        kalman_filter_mod = KalmanFilterMod(
+        kalman_filter_mod = KFMod(
             transition_matrices=self.F,
             observation_matrices=self.H,
             transition_covariance=self.Q,
@@ -70,14 +71,14 @@ class TestKalmanFilterMod(TestBase):
         """
         Same as test_filter but with smoothing
         """
-        y_t, x_t = self._gen_values()
+        y_t, x_t = self.gen_values()
         kalman_filter = KalmanFilter(
             transition_matrices=self.F,
             observation_matrices=self.H,
             transition_covariance=self.Q,
             observation_covariance=self.R,
         )
-        kalman_filter_mod = KalmanFilterMod(
+        kalman_filter_mod = KFMod(
             transition_matrices=self.F,
             observation_matrices=self.H,
             transition_covariance=self.Q,
@@ -93,8 +94,8 @@ class TestKalmanFilterMod(TestBase):
         """
         Comparing predicted values with calculated from smoothed factors
         """
-        y_t, _ = self._gen_values()
-        kalman_filter = KalmanFilterMod(
+        y_t, _ = self.gen_values()
+        kalman_filter = KFMod(
             transition_matrices=self.F,
             observation_matrices=self.H,
             transition_covariance=self.Q,
@@ -111,9 +112,9 @@ class TestKalmanFilterMod(TestBase):
         """
         Comparing fill-na with calculated from smoothed factors
         """
-        y_t, _ = self._gen_values()
+        y_t, _ = self.gen_values()
         y_t[-1, :2] = np.nan
-        kalman_filter = KalmanFilterMod(
+        kalman_filter = KFMod(
             transition_matrices=self.F,
             observation_matrices=self.H,
             transition_covariance=self.Q,
@@ -132,14 +133,14 @@ class TestKalmanFilterMod(TestBase):
             3. r2 on missing data for modified is larger than 0
             4. when filling missing data with predicted states, r2 of modified is still larger
         """
-        y_t, x_t = self._gen_values(perc_missing=0.1)
+        y_t, x_t = self.gen_values(perc_missing=0.1)
         kalman_filter = KalmanFilter(
             transition_matrices=self.F,
             observation_matrices=self.H,
             transition_covariance=self.Q,
             observation_covariance=self.R,
         )
-        kalman_filter_mod = KalmanFilterMod(
+        kalman_filter_mod = KFMod(
             transition_matrices=self.F,
             observation_matrices=self.H,
             transition_covariance=self.Q,
@@ -182,14 +183,14 @@ class TestKalmanFilterMod(TestBase):
             1. modified has no missing values on filtered states, while original does
             2. r2 is above 0.95
         """
-        y_t, x_t = self._gen_values(perc_missing=0.1)
+        y_t, x_t = self.gen_values(perc_missing=0.1)
         kalman_filter = KalmanFilter(
             transition_matrices=self.F,
             observation_matrices=self.H,
             transition_covariance=self.Q,
             observation_covariance=self.R,
         )
-        kalman_filter_mod = KalmanFilterMod(
+        kalman_filter_mod = KFMod(
             transition_matrices=self.F,
             observation_matrices=self.H,
             transition_covariance=self.Q,
@@ -209,13 +210,13 @@ class TestKalmanFilterMod(TestBase):
 
 class TestStateSpace(TestBase):
     """
-    Testing predict, filter and smooth of the state space wrapper against KalmanFilterMod tested separately.
+    Testing predict, filter and smooth of the state space wrapper against KFMod tested separately.
     """
 
     @classmethod
     def setUpClass(cls):
         super(TestStateSpace, cls).setUpClass()
-        cls.kf = KalmanFilterMod(
+        cls.kf = KFMod(
             transition_matrices=cls.F,
             observation_matrices=cls.H,
             transition_covariance=cls.Q,
@@ -229,21 +230,21 @@ class TestStateSpace(TestBase):
         )
 
     def test_predict(self):
-        y, _ = self._gen_values()
+        y, _ = self.gen_values()
         mean1, cov1 = self.kf.predict(y, steps_ahead=10)
         mean2, cov2 = self.ssm_kf.predict(y, steps_ahead=10)
         np.testing.assert_array_almost_equal(mean1, mean2)
         np.testing.assert_array_almost_equal(cov1, cov2)
 
     def test_filter(self):
-        y, _ = self._gen_values()
+        y, _ = self.gen_values()
         mean1, cov1 = self.kf.filter(y)
         mean2, cov2 = self.ssm_kf.filter(y)
         np.testing.assert_array_almost_equal(mean1, mean2)
         np.testing.assert_array_almost_equal(cov1, cov2)
 
     def test_smooth(self):
-        y, _ = self._gen_values()
+        y, _ = self.gen_values()
         mean1, cov1 = self.kf.smooth(y)
         mean2, cov2 = self.ssm_kf.smooth(y)
         np.testing.assert_array_almost_equal(mean1, mean2)

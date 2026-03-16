@@ -7,7 +7,7 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 
-from models.state_space import StateSpace
+from models.state_space.state_space_wrapper import StateSpace
 from models.vector_autoregressive import VARLayerClosedForm, VARAutoencoder
 from tools.loss_tools import mse_missing, np_mse_missing
 from tools.getters_converters_tools import (
@@ -262,9 +262,13 @@ class DDFM:
 
     def _init_optimizer(self):
         if self.optimizer == "SGD":
-            self._optimizer = keras.optimizers.SGD(learning_rate=self.learning_rate, clipnorm=self.clipnorm)
+            self._optimizer = keras.optimizers.SGD(
+                learning_rate=self.learning_rate, clipnorm=self.clipnorm
+            )
         elif self.optimizer == "Adam":
-            self._optimizer = keras.optimizers.Adam(learning_rate=self.learning_rate, clipnorm=self.clipnorm)
+            self._optimizer = keras.optimizers.Adam(
+                learning_rate=self.learning_rate, clipnorm=self.clipnorm
+            )
         else:
             raise KeyError("Optimizer must be SGD or Adam")
 

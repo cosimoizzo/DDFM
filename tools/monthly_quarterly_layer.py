@@ -16,13 +16,15 @@ class MixedFreqMQLayer(keras.layers.Layer):
         blocks = [tf.eye(input_dim)]
         # then only quarterly
         for a in self.aggr_restr[1:]:
-            block = tf.concat([
-                tf.zeros((start_quarterly, input_dim)),  # monthly to zero
-                tf.concat([
-                    tf.zeros((n_q, start_quarterly)),
-                    a * tf.eye(n_q)
-                ], axis=1)
-            ], axis=0)
+            block = tf.concat(
+                [
+                    tf.zeros((start_quarterly, input_dim)),  # monthly to zero
+                    tf.concat(
+                        [tf.zeros((n_q, start_quarterly)), a * tf.eye(n_q)], axis=1
+                    ),
+                ],
+                axis=0,
+            )
             blocks.append(block)
         mm_mq = tf.concat(blocks, axis=0)
         self.w = self.add_weight(

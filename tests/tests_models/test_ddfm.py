@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 from models.ddfm import DDFM
-from models.state_space import StateSpace
+from models.state_space.state_space_wrapper import StateSpace
 from synthetic_dgp.simulate import SIMULATE, QuarterlyVars, AggregationInstr
 
 
@@ -42,7 +42,9 @@ class TestDDFM(unittest.TestCase):
         predict1 = ddfm1.encoder(ddfm1._data_tmp)
         predict2 = ddfm2.encoder(ddfm2._data_tmp)
         r2 = self.sim.evaluate(predict2.numpy(), f_true=predict1.numpy())
-        self.assertGreaterEqual(r2, 0.95, msg=f"Cannot reproduce states{self.append_to_msg}.")
+        self.assertGreaterEqual(
+            r2, 0.95, msg=f"Cannot reproduce states{self.append_to_msg}."
+        )
 
     def _get_model(self, structure_encoder, jointly_est_var=False, seed=3):
         ddfm = DDFM(
@@ -61,7 +63,9 @@ class TestDDFM(unittest.TestCase):
     def _single_test_fit(self, ddfm):
         factors_hat = np.mean(ddfm.factors_ae, axis=0)
         r2 = self.sim.evaluate(factors_hat, f_true=self.sim.f[self.lags_input :])
-        self.assertGreaterEqual(r2, 0.8, msg=f"r2 should be greater than 0.8{self.append_to_msg}")
+        self.assertGreaterEqual(
+            r2, 0.8, msg=f"r2 should be greater than 0.8{self.append_to_msg}"
+        )
         predict_from_auto = ddfm.autoencoder(ddfm._data_tmp)
         predict_from_encode_decode = ddfm.decoder(ddfm.encoder(ddfm._data_tmp))
         np.testing.assert_array_almost_equal(
@@ -83,18 +87,50 @@ class TestDDFM(unittest.TestCase):
 
     def _check_state_space(self, ddfm):
         msg_if_fail = f"Failed to build state_space properly {self.append_to_msg}"
-        self.assertIsInstance(
-            ddfm.state_space, StateSpace, msg=msg_if_fail
-        )
+        self.assertIsInstance(ddfm.state_space, StateSpace, msg=msg_if_fail)
         # check shapes
-        self.assertEqual(ddfm.state_space.observation_matrices.shape, (self.sim.n, self.sim.n + self.sim.r), msg=msg_if_fail)
-        np.testing.assert_array_almost_equal(ddfm.state_space.observation_matrices[:, self.sim.r:], np.eye(self.sim.n), err_msg=msg_if_fail)
-        self.assertEqual(ddfm.state_space.observation_covariance.shape, (self.sim.n, self.sim.n), msg=msg_if_fail)
-        np.testing.assert_array_almost_equal(ddfm.state_space.observation_covariance, np.diag(np.diag(ddfm.state_space.observation_covariance)), err_msg=msg_if_fail)
-        self.assertEqual(ddfm.state_space.transition_matrices.shape, (self.sim.n + self.sim.r, self.sim.n + self.sim.r), msg=msg_if_fail)
-        np.testing.assert_array_almost_equal(ddfm.state_space.transition_matrices[self.sim.r:, self.sim.r:], np.diag(np.diag(ddfm.state_space.transition_matrices[self.sim.r:, self.sim.r:])), err_msg=msg_if_fail)
-        self.assertEqual(ddfm.state_space.transition_covariance.shape, (self.sim.n + self.sim.r, self.sim.n + self.sim.r), msg=msg_if_fail)
-        np.testing.assert_array_almost_equal(ddfm.state_space.transition_covariance, np.diag(np.diag(ddfm.state_space.transition_covariance)), err_msg=msg_if_fail)
+        self.assertEqual(
+            ddfm.state_space.observation_map.shape,
+            (self.sim.n, self.sim.n + self.sim.r),
+            msg=msg_if_fail,
+        )
+        np.testing.assert_array_almost_equal(
+            ddfm.state_space.observation_map[:, self.sim.r :],
+            np.eye(self.sim.n),
+            err_msg=msg_if_fail,
+        )
+        self.assertEqual(
+            ddfm.state_space.observation_covariance.shape,
+            (self.sim.n, self.sim.n),
+            msg=msg_if_fail,
+        )
+        np.testing.assert_array_almost_equal(
+            ddfm.state_space.observation_covariance,
+            np.diag(np.diag(ddfm.state_space.observation_covariance)),
+            err_msg=msg_if_fail,
+        )
+        self.assertEqual(
+            ddfm.state_space.transition_map.shape,
+            (self.sim.n + self.sim.r, self.sim.n + self.sim.r),
+            msg=msg_if_fail,
+        )
+        np.testing.assert_array_almost_equal(
+            ddfm.state_space.transition_map[self.sim.r :, self.sim.r :],
+            np.diag(
+                np.diag(ddfm.state_space.transition_map[self.sim.r :, self.sim.r :])
+            ),
+            err_msg=msg_if_fail,
+        )
+        self.assertEqual(
+            ddfm.state_space.transition_covariance.shape,
+            (self.sim.n + self.sim.r, self.sim.n + self.sim.r),
+            msg=msg_if_fail,
+        )
+        np.testing.assert_array_almost_equal(
+            ddfm.state_space.transition_covariance,
+            np.diag(np.diag(ddfm.state_space.transition_covariance)),
+            err_msg=msg_if_fail,
+        )
 
     def _single_test_predict(self, ddfm):
         mean, covs = ddfm.predict(pd.DataFrame(self.x), steps_ahead=2)
@@ -112,9 +148,13 @@ class TestDDFMMonthlyQuarterly(TestDDFM):
         cls.append_to_msg = " (mixed frequency)"
         cls.idx_quarterly = [i for i in range(35, 40)]
         cls.sim = SIMULATE(seed=seed, n=40, r=3, poly_degree=1)
-        cls.x = cls.sim.simulate(250, portion_missings=0.05,
-                                 quarterly_vars=QuarterlyVars(cls.idx_quarterly,
-                                                              aggregation=AggregationInstr.MM))
+        cls.x = cls.sim.simulate(
+            250,
+            portion_missings=0.05,
+            quarterly_vars=QuarterlyVars(
+                cls.idx_quarterly, aggregation=AggregationInstr.MM
+            ),
+        )
         r_f_and_nnlinf = cls.sim.f.shape[1]
         cls.structure_encoder = (
             (r_f_and_nnlinf * 6, r_f_and_nnlinf * 4, r_f_and_nnlinf * 2, r_f_and_nnlinf)
@@ -124,48 +164,91 @@ class TestDDFMMonthlyQuarterly(TestDDFM):
 
     def _check_state_space(self, ddfm):
         msg_if_fail = f"Failed to build state_space properly {self.append_to_msg}"
-        self.assertIsInstance(
-            ddfm.state_space, StateSpace, msg=msg_if_fail
-        )
+        self.assertIsInstance(ddfm.state_space, StateSpace, msg=msg_if_fail)
         # check shapes
-        self.assertEqual(ddfm.state_space.observation_matrices.shape, (self.sim.n, (self.sim.n + self.sim.r)*5),
-                         msg=msg_if_fail)
-        n_monthly = self.sim.n-len(self.idx_quarterly)
-        expected_monthly = np.zeros((n_monthly, (self.sim.n + self.sim.r)*5 - self.sim.r))
-        expected_monthly[:,4*self.sim.r:4*self.sim.r+n_monthly] = np.eye(n_monthly)
-        np.testing.assert_array_almost_equal(ddfm.state_space.observation_matrices[:-len(self.idx_quarterly), self.sim.r:], expected_monthly,
-                                             err_msg=msg_if_fail)
+        self.assertEqual(
+            ddfm.state_space.observation_map.shape,
+            (self.sim.n, (self.sim.n + self.sim.r) * 5),
+            msg=msg_if_fail,
+        )
+        n_monthly = self.sim.n - len(self.idx_quarterly)
+        expected_monthly = np.zeros(
+            (n_monthly, (self.sim.n + self.sim.r) * 5 - self.sim.r)
+        )
+        expected_monthly[:, 4 * self.sim.r : 4 * self.sim.r + n_monthly] = np.eye(
+            n_monthly
+        )
+        np.testing.assert_array_almost_equal(
+            ddfm.state_space.observation_map[: -len(self.idx_quarterly), self.sim.r :],
+            expected_monthly,
+            err_msg=msg_if_fail,
+        )
         aggr_weights = np.array([1, 2, 3, 2, 1])
         for j in self.idx_quarterly:
-            quarterly_loadings = ddfm.state_space.observation_matrices[j, :]
+            quarterly_loadings = ddfm.state_space.observation_map[j, :]
             expected_quarterly_loadings = np.zeros_like(quarterly_loadings)
             # common
             for i_f in range(self.sim.r):
-                expected_quarterly_loadings[[i*self.sim.r+i_f for i in range(5)]] = aggr_weights * quarterly_loadings[i_f]
+                expected_quarterly_loadings[
+                    [i * self.sim.r + i_f for i in range(5)]
+                ] = (aggr_weights * quarterly_loadings[i_f])
             # idio
-            expected_quarterly_loadings[[self.sim.r*5 + self.sim.n * i + j for i in range(5)]] = aggr_weights
-            np.testing.assert_array_almost_equal(quarterly_loadings, expected_quarterly_loadings, err_msg=msg_if_fail)
-        self.assertEqual(ddfm.state_space.observation_covariance.shape, (self.sim.n, self.sim.n), msg=msg_if_fail)
-        np.testing.assert_array_almost_equal(ddfm.state_space.observation_covariance,
-                                             np.diag(np.diag(ddfm.state_space.observation_covariance)),
-                                             err_msg=msg_if_fail)
-        self.assertEqual(ddfm.state_space.transition_matrices.shape, ((self.sim.n + self.sim.r)*5, (self.sim.n + self.sim.r)*5),
-                         msg=msg_if_fail)
-        np.testing.assert_array_almost_equal(ddfm.state_space.transition_matrices[self.sim.r:self.sim.r*5, :self.sim.r*5], np.eye(self.sim.r*4, self.sim.r*5), err_msg=msg_if_fail)
+            expected_quarterly_loadings[
+                [self.sim.r * 5 + self.sim.n * i + j for i in range(5)]
+            ] = aggr_weights
+            np.testing.assert_array_almost_equal(
+                quarterly_loadings, expected_quarterly_loadings, err_msg=msg_if_fail
+            )
+        self.assertEqual(
+            ddfm.state_space.observation_covariance.shape,
+            (self.sim.n, self.sim.n),
+            msg=msg_if_fail,
+        )
         np.testing.assert_array_almost_equal(
-            ddfm.state_space.transition_matrices[self.sim.r * 5 + self.sim.n:, self.sim.r * 5:],
-            np.eye(self.sim.n * 4, self.sim.n * 5), err_msg=msg_if_fail)
-        self.assertEqual(ddfm.state_space.transition_covariance.shape,
-                         ((self.sim.n + self.sim.r)*5, (self.sim.n + self.sim.r)*5), msg=msg_if_fail)
-        np.testing.assert_array_almost_equal(ddfm.state_space.transition_covariance,
-                                             np.diag(np.diag(ddfm.state_space.transition_covariance)),
-                                             err_msg=msg_if_fail)
+            ddfm.state_space.observation_covariance,
+            np.diag(np.diag(ddfm.state_space.observation_covariance)),
+            err_msg=msg_if_fail,
+        )
+        self.assertEqual(
+            ddfm.state_space.transition_map.shape,
+            ((self.sim.n + self.sim.r) * 5, (self.sim.n + self.sim.r) * 5),
+            msg=msg_if_fail,
+        )
+        np.testing.assert_array_almost_equal(
+            ddfm.state_space.transition_map[
+                self.sim.r : self.sim.r * 5, : self.sim.r * 5
+            ],
+            np.eye(self.sim.r * 4, self.sim.r * 5),
+            err_msg=msg_if_fail,
+        )
+        np.testing.assert_array_almost_equal(
+            ddfm.state_space.transition_map[
+                self.sim.r * 5 + self.sim.n :, self.sim.r * 5 :
+            ],
+            np.eye(self.sim.n * 4, self.sim.n * 5),
+            err_msg=msg_if_fail,
+        )
+        self.assertEqual(
+            ddfm.state_space.transition_covariance.shape,
+            ((self.sim.n + self.sim.r) * 5, (self.sim.n + self.sim.r) * 5),
+            msg=msg_if_fail,
+        )
+        np.testing.assert_array_almost_equal(
+            ddfm.state_space.transition_covariance,
+            np.diag(np.diag(ddfm.state_space.transition_covariance)),
+            err_msg=msg_if_fail,
+        )
         transition_covariance_zeroed = ddfm.state_space.transition_covariance.copy()
-        transition_covariance_zeroed[:self.sim.r, :self.sim.r] = 0
-        transition_covariance_zeroed[self.sim.r*5:self.sim.r*5+self.sim.n, self.sim.r*5:self.sim.r*5+self.sim.n] = 0
-        np.testing.assert_array_almost_equal(transition_covariance_zeroed,
-                                             np.zeros_like(transition_covariance_zeroed),
-                                             err_msg=msg_if_fail)
+        transition_covariance_zeroed[: self.sim.r, : self.sim.r] = 0
+        transition_covariance_zeroed[
+            self.sim.r * 5 : self.sim.r * 5 + self.sim.n,
+            self.sim.r * 5 : self.sim.r * 5 + self.sim.n,
+        ] = 0
+        np.testing.assert_array_almost_equal(
+            transition_covariance_zeroed,
+            np.zeros_like(transition_covariance_zeroed),
+            err_msg=msg_if_fail,
+        )
 
     def _get_model(self, structure_encoder, jointly_est_var=False, seed=123):
         ddfm = DDFM(
@@ -177,12 +260,11 @@ class TestDDFMMonthlyQuarterly(TestDDFM):
             max_iter=1000,
             var_loss_weight=1 if jointly_est_var else 0,
             seed=seed,
-            clipnorm=5.0
+            clipnorm=5.0,
         )
         df_x = pd.DataFrame(self.x)
         ddfm.fit(df_x, build_state_space=True, vars_mq_restrictions=self.idx_quarterly)
         return ddfm
-
 
 
 if __name__ == "__main__":
