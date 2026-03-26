@@ -2,6 +2,8 @@ import numpy as np
 from pykalman import KalmanFilter
 from pykalman.standard import _last_dims, _filter_predict, _filter_correct, _smooth
 
+from models.state_space.base_filter import BaseFilter
+
 
 def _filter(
     transition_matrices,
@@ -82,14 +84,14 @@ def _filter(
     )
 
 
-class KFMod(KalmanFilter):
-    def filter(self, x: np.ndarray):
+class KFMod(BaseFilter, KalmanFilter):
+    def filter(self, y: np.ndarray):
         """
         Modified version of the PyKalman (https://pypi.org/project/pykalman/) filter.
         Changes: I modify the _filter function to deal with missing data.
         TODO: consider discussing with PyKalman community about integration.
         """
-        Z = self._parse_observations(x)
+        Z = self._parse_observations(y)
 
         (
             transition_matrices,
@@ -115,13 +117,13 @@ class KFMod(KalmanFilter):
         )
         return (filtered_state_means, filtered_state_covariances)
 
-    def smooth(self, x: np.ndarray):
+    def smooth(self, y: np.ndarray):
         """
         Modified version of the PyKalman (https://pypi.org/project/pykalman/) smoother.
         Changes: I modify the _filter function to deal with missing data.
         TODO: consider discussing with PyKalman community about integration.
         """
-        Z = self._parse_observations(x)
+        Z = self._parse_observations(y)
 
         (
             transition_matrices,
@@ -160,17 +162,6 @@ class KFMod(KalmanFilter):
         )[:2]
         return (smoothed_state_means, smoothed_state_covariances)
 
-    def predict(self, x: np.ndarray, steps_ahead: int):
-        """
-        Predict observables, from 0 (fill missing) to steps_ahead forecasting horizon
-        """
-        smoothed_state_means, smoothed_state_covariances = self.smooth(x)
-        predicted_state_mean = smoothed_state_means[-1]
-        predicted_state_covariance = smoothed_state_covariances[-1]
-        return self.predict_from_state(
-            predicted_state_mean, predicted_state_covariance, steps_ahead
-        )
-
     def predict_from_state(
         self,
         predicted_state_mean: np.ndarray,
@@ -178,8 +169,7 @@ class KFMod(KalmanFilter):
         steps_ahead: int,
     ):
         """
-        Predict observables, from 0 (fill missing) to steps_ahead forecasting horizon using starting value from state
-        distribution at time 0.
+        Predict observables, from 0 to steps_ahead forecasting horizons.
         """
         assert steps_ahead >= 0, "Steps Ahead must be positive."
         (
@@ -223,10 +213,3 @@ class KFMod(KalmanFilter):
                 predicted_state_covariance,
             )
         return predicted_observation_mean, predicted_observation_covariance
-
-    def fill_na(self, x: np.ndarray):
-        """
-        Fill missing values in the observables
-        """
-        mean, cov = self.predict(x, steps_ahead=0)
-        return mean[0, ...], cov[0, ...]

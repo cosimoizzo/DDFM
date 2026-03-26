@@ -1,12 +1,19 @@
 from typing import Tuple
 import numpy as np
+from enum import StrEnum
 
 from models.state_space.kf_utils import KFMod
+from models.state_space.ukf_utils import AdditiveUKF
+
+
+class FilterType(StrEnum):
+    KalmanFilter = "KalmanFilter"
+    UnscentedKalmanFilter = "UnscentedKalmanFilter"
 
 
 class StateSpace:
     """
-    State-space model wrapper around modified PyKalman.
+    State-space model wrapper.
     """
 
     def __init__(
@@ -15,21 +22,27 @@ class StateSpace:
         measurement_params: dict,
         mean_y: np.ndarray = None,
         sigma_y: np.ndarray = None,
-        filter_type: str = "KalmanFilter",
+        x0: np.ndarray = None,
+        P0: np.ndarray = None,
+        filter_type: FilterType = FilterType.KalmanFilter,
     ):
         """
         The init method will build the state space model according to the selected filter.
         Args:
-            mean_y: mean of the measurement variable
-            sigma_y: standard deviation of the measurement variable
             transition_params: parameters of the transition equation
             measurement_params: parameters of the measurement equation
+            mean_y: mean of the measurement variable
+            sigma_y: standard deviation of the measurement variable
+            x0: default starting values for the state mean
+            P0: default starting values for the state covariance
             filter_type: the type of filter selected
 
         """
         super().__init__()
         self.mean_y = mean_y
         self.sigma_y = sigma_y
+        self.x0 = x0
+        self.P0 = P0
         # init parameters of the state space to None
         self.observation_map = None
         self.observation_covariance = None
@@ -37,11 +50,13 @@ class StateSpace:
         self.transition_covariance = None
         self.observation_offsets = None
         self.ssm_repr = None
-        if filter_type == "KalmanFilter":
+        if filter_type == FilterType.KalmanFilter:
             # build a linear gaussian state-space model
             self._build_lgssm(transition_params, measurement_params)
+        elif filter_type == FilterType.UnscentedKalmanFilter:
+            self._build_ukf(transition_params, measurement_params)
         else:
-            raise NotImplementedError("Only KalmanFilter is implemented at the moment.")
+            raise NotImplementedError("{} not implemented".format(filter_type))
 
     def _scale_data(self, y: np.ndarray) -> np.ndarray:
         y_cpy = y.copy()
@@ -82,6 +97,37 @@ class StateSpace:
             transition_covariance=self.transition_covariance,
             observation_covariance=self.observation_covariance,
             observation_offsets=self.observation_offsets,
+        )
+
+    def _build_ukf(self, transition_params: dict, measurement_params: dict) -> None:
+        """
+        Build a state space model of the following form:
+            measurement: y_t = H(x_t) + v_t; v_t ∼ N(0, R)
+            transition: x_t = F(x_t-1) + w_t; w_t ∼ N(0, Q)
+        Args:
+            transition_params: parameters of the transition equation
+            measurement_params: parameters of the measurement equation
+
+        Returns:
+            None, it updates the class attributes.
+        """
+
+        self.observation_map, self.observation_covariance = (
+            measurement_params["observation_map"],
+            measurement_params["observation_covariance"],
+        )
+        self.observation_offsets = None
+        self.transition_map, self.transition_covariance = (
+            transition_params["transition_map"],
+            transition_params["transition_covariance"],
+        )
+        self.ssm_repr = AdditiveUKF(
+            transition_map=self.transition_map,
+            observation_map=self.observation_map,
+            transition_covariance=self.transition_covariance,
+            observation_covariance=self.observation_covariance,
+            x0=self.x0,
+            P0=self.P0,
         )
 
     def predict(self, y: np.ndarray, steps_ahead: int) -> Tuple[np.ndarray, np.ndarray]:

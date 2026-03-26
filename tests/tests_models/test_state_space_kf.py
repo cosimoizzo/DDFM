@@ -6,6 +6,10 @@ from pykalman import KalmanFilter
 from models.state_space.state_space_wrapper import StateSpace
 from models.state_space.kf_utils import KFMod
 
+# Linear system with low noise should achieve near-perfect reconstruction
+R2_THRESHOLD_FILTER = 0.99
+# Missing data reduce accuracy
+R2_THRESHOLD_MISSING = 0.95
 
 class TestBase(unittest.TestCase):
     @classmethod
@@ -14,11 +18,12 @@ class TestBase(unittest.TestCase):
         cls.n = 5
         cls.d = 2
         cls.F = 0.9 * np.eye(cls.d)
+        cls.F[0,1] = -0.5
         cls.H = cls.rng.normal(size=(cls.n, cls.d))
         cls.Q = np.eye(cls.d)
         cls.R = 0.1 * np.eye(cls.n)
 
-    def gen_values(self, n_obs: int = 100, perc_missing: float = None):
+    def _gen_values(self, n_obs: int = 100, perc_missing: float = None):
         """
         x_{t+1}  = F x_{t} + N(0, Q)
         y_{t}    = H x_{t} + N(0, R)
@@ -48,7 +53,7 @@ class TestKFMod(TestBase):
         Given a simulated LGSSM, check filtered states are close to extracted ones and the same of original PyKalman
         implementation.
         """
-        y_t, x_t = self.gen_values()
+        y_t, x_t = self._gen_values()
         kalman_filter = KalmanFilter(
             transition_matrices=self.F,
             observation_matrices=self.H,
@@ -63,7 +68,7 @@ class TestKFMod(TestBase):
         )
         hat_mod_x_t = kalman_filter_mod.filter(y_t)[0]
         r2 = 1 - np.sum(np.power(hat_mod_x_t - x_t, 2)) / np.sum(np.power(x_t, 2))
-        self.assertGreater(r2, 0.99)
+        self.assertGreater(r2, R2_THRESHOLD_FILTER)
         hat_x_t = kalman_filter.filter(y_t)[0]
         np.testing.assert_allclose(hat_x_t, hat_mod_x_t, rtol=1e-5)
 
@@ -71,7 +76,7 @@ class TestKFMod(TestBase):
         """
         Same as test_filter but with smoothing
         """
-        y_t, x_t = self.gen_values()
+        y_t, x_t = self._gen_values()
         kalman_filter = KalmanFilter(
             transition_matrices=self.F,
             observation_matrices=self.H,
@@ -86,7 +91,7 @@ class TestKFMod(TestBase):
         )
         hat_mod_x_t = kalman_filter_mod.smooth(y_t)[0]
         r2 = 1 - np.sum(np.power(hat_mod_x_t - x_t, 2)) / np.sum(np.power(x_t, 2))
-        self.assertGreater(r2, 0.99)
+        self.assertGreater(r2, R2_THRESHOLD_FILTER)
         hat_x_t = kalman_filter.smooth(y_t)[0]
         np.testing.assert_allclose(hat_x_t, hat_mod_x_t, rtol=1e-5)
 
@@ -94,7 +99,7 @@ class TestKFMod(TestBase):
         """
         Comparing predicted values with calculated from smoothed factors
         """
-        y_t, _ = self.gen_values()
+        y_t, _ = self._gen_values()
         kalman_filter = KFMod(
             transition_matrices=self.F,
             observation_matrices=self.H,
@@ -112,7 +117,7 @@ class TestKFMod(TestBase):
         """
         Comparing fill-na with calculated from smoothed factors
         """
-        y_t, _ = self.gen_values()
+        y_t, _ = self._gen_values()
         y_t[-1, :2] = np.nan
         kalman_filter = KFMod(
             transition_matrices=self.F,
@@ -133,7 +138,7 @@ class TestKFMod(TestBase):
             3. r2 on missing data for modified is larger than 0
             4. when filling missing data with predicted states, r2 of modified is still larger
         """
-        y_t, x_t = self.gen_values(perc_missing=0.1)
+        y_t, x_t = self._gen_values(perc_missing=0.1)
         kalman_filter = KalmanFilter(
             transition_matrices=self.F,
             observation_matrices=self.H,
@@ -183,7 +188,7 @@ class TestKFMod(TestBase):
             1. modified has no missing values on filtered states, while original does
             2. r2 is above 0.95
         """
-        y_t, x_t = self.gen_values(perc_missing=0.1)
+        y_t, x_t = self._gen_values(perc_missing=0.1)
         kalman_filter = KalmanFilter(
             transition_matrices=self.F,
             observation_matrices=self.H,
@@ -205,17 +210,17 @@ class TestKFMod(TestBase):
         r2_mod = 1 - np.nansum(np.power(hat_mod_x_t - x_t, 2)) / np.sum(
             np.power(x_t, 2)
         )
-        self.assertGreater(r2_mod, 0.95)
+        self.assertGreater(r2_mod, R2_THRESHOLD_MISSING)
 
 
-class TestStateSpace(TestBase):
+class TestStateSpaceKf(TestBase):
     """
     Testing predict, filter and smooth of the state space wrapper against KFMod tested separately.
     """
 
     @classmethod
     def setUpClass(cls):
-        super(TestStateSpace, cls).setUpClass()
+        super(TestStateSpaceKf, cls).setUpClass()
         cls.kf = KFMod(
             transition_matrices=cls.F,
             observation_matrices=cls.H,
@@ -230,21 +235,21 @@ class TestStateSpace(TestBase):
         )
 
     def test_predict(self):
-        y, _ = self.gen_values()
+        y, _ = self._gen_values()
         mean1, cov1 = self.kf.predict(y, steps_ahead=10)
         mean2, cov2 = self.ssm_kf.predict(y, steps_ahead=10)
         np.testing.assert_array_almost_equal(mean1, mean2)
         np.testing.assert_array_almost_equal(cov1, cov2)
 
     def test_filter(self):
-        y, _ = self.gen_values()
+        y, _ = self._gen_values()
         mean1, cov1 = self.kf.filter(y)
         mean2, cov2 = self.ssm_kf.filter(y)
         np.testing.assert_array_almost_equal(mean1, mean2)
         np.testing.assert_array_almost_equal(cov1, cov2)
 
     def test_smooth(self):
-        y, _ = self.gen_values()
+        y, _ = self._gen_values()
         mean1, cov1 = self.kf.smooth(y)
         mean2, cov2 = self.ssm_kf.smooth(y)
         np.testing.assert_array_almost_equal(mean1, mean2)
