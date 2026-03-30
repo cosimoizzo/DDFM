@@ -11,10 +11,12 @@ from models.state_space.ukf_utils import AdditiveUKF
 
 TF_DTYPE = tf.float64
 
+
 class TestAdditiveUKF(TestBase):
     """
     Benchmarking AdditiveUKF to standard KF in the linear case.
     """
+
     @staticmethod
     def _make_linear_keras_model(in_dim, out_dim, weight_matrix):
         inputs = keras.Input(shape=(in_dim,), dtype=TF_DTYPE)
@@ -39,8 +41,12 @@ class TestAdditiveUKF(TestBase):
             P0=np.cov(x_t, rowvar=False),
         )
         ukf = AdditiveUKF(
-            transition_map=self._make_linear_keras_model(self.F.shape[0], self.F.shape[0], self.F.T),
-            observation_map=self._make_linear_keras_model(self.F.shape[0], self.H.shape[0], self.H.T),
+            transition_map=self._make_linear_keras_model(
+                self.F.shape[0], self.F.shape[0], self.F.T
+            ),
+            observation_map=self._make_linear_keras_model(
+                self.F.shape[0], self.H.shape[0], self.H.T
+            ),
             transition_covariance=self.Q,
             observation_covariance=self.R,
             x0=x_t[0],
@@ -49,7 +55,9 @@ class TestAdditiveUKF(TestBase):
         )
         hat_mod_x_t = kalman_filter.filter(y_t)[0]
         hat_ukf_x_t = ukf.filter(y_t)[0]
-        r2 = 1 - np.sum(np.power(hat_ukf_x_t - hat_mod_x_t, 2)) / np.sum(np.power(hat_mod_x_t, 2))
+        r2 = 1 - np.sum(np.power(hat_ukf_x_t - hat_mod_x_t, 2)) / np.sum(
+            np.power(hat_mod_x_t, 2)
+        )
         self.assertGreater(r2, R2_THRESHOLD_FILTER)
 
     def test_smooth(self):
@@ -63,8 +71,12 @@ class TestAdditiveUKF(TestBase):
             P0=np.cov(x_t, rowvar=False),
         )
         ukf = AdditiveUKF(
-            transition_map=self._make_linear_keras_model(self.F.shape[0], self.F.shape[0], self.F.T),
-            observation_map=self._make_linear_keras_model(self.F.shape[0], self.H.shape[0], self.H.T),
+            transition_map=self._make_linear_keras_model(
+                self.F.shape[0], self.F.shape[0], self.F.T
+            ),
+            observation_map=self._make_linear_keras_model(
+                self.F.shape[0], self.H.shape[0], self.H.T
+            ),
             transition_covariance=self.Q,
             observation_covariance=self.R,
             x0=x_t[0],
@@ -73,7 +85,9 @@ class TestAdditiveUKF(TestBase):
         )
         hat_mod_x_t = kalman_filter.smooth(y_t)[0]
         hat_ukf_x_t = ukf.smooth(y_t)[0]
-        r2 = 1 - np.sum(np.power(hat_ukf_x_t - hat_mod_x_t, 2)) / np.sum(np.power(hat_mod_x_t, 2))
+        r2 = 1 - np.sum(np.power(hat_ukf_x_t - hat_mod_x_t, 2)) / np.sum(
+            np.power(hat_mod_x_t, 2)
+        )
         self.assertGreater(r2, R2_THRESHOLD_FILTER)
 
     def test_smooth_with_missing(self):
@@ -87,8 +101,12 @@ class TestAdditiveUKF(TestBase):
             P0=np.cov(x_t, rowvar=False),
         )
         ukf = AdditiveUKF(
-            transition_map=self._make_linear_keras_model(self.F.shape[0], self.F.shape[0], self.F.T),
-            observation_map=self._make_linear_keras_model(self.F.shape[0], self.H.shape[0], self.H.T),
+            transition_map=self._make_linear_keras_model(
+                self.F.shape[0], self.F.shape[0], self.F.T
+            ),
+            observation_map=self._make_linear_keras_model(
+                self.F.shape[0], self.H.shape[0], self.H.T
+            ),
             transition_covariance=self.Q,
             observation_covariance=self.R,
             x0=x_t[0],
@@ -97,7 +115,9 @@ class TestAdditiveUKF(TestBase):
         )
         hat_mod_x_t = kalman_filter.smooth(y_t)[0]
         hat_ukf_x_t = ukf.smooth(y_t)[0]
-        r2 = 1 - np.sum(np.power(hat_ukf_x_t - hat_mod_x_t, 2)) / np.sum(np.power(hat_mod_x_t, 2))
+        r2 = 1 - np.sum(np.power(hat_ukf_x_t - hat_mod_x_t, 2)) / np.sum(
+            np.power(hat_mod_x_t, 2)
+        )
         self.assertGreater(r2, R2_THRESHOLD_FILTER)
 
     def test_predict(self):
@@ -106,8 +126,12 @@ class TestAdditiveUKF(TestBase):
         """
         y_t, x_t = self._gen_values()
         ukf = AdditiveUKF(
-            transition_map=self._make_linear_keras_model(self.F.shape[0], self.F.shape[0], self.F.T),
-            observation_map=self._make_linear_keras_model(self.F.shape[0], self.H.shape[0], self.H.T),
+            transition_map=self._make_linear_keras_model(
+                self.F.shape[0], self.F.shape[0], self.F.T
+            ),
+            observation_map=self._make_linear_keras_model(
+                self.F.shape[0], self.H.shape[0], self.H.T
+            ),
             transition_covariance=self.Q,
             observation_covariance=self.R,
             x0=x_t[0],
@@ -128,8 +152,12 @@ class TestAdditiveUKF(TestBase):
         y_t, x_t = self._gen_values()
         y_t[-1, :2] = np.nan
         ukf = AdditiveUKF(
-            transition_map=self._make_linear_keras_model(self.F.shape[0], self.F.shape[0], self.F.T),
-            observation_map=self._make_linear_keras_model(self.F.shape[0], self.H.shape[0], self.H.T),
+            transition_map=self._make_linear_keras_model(
+                self.F.shape[0], self.F.shape[0], self.F.T
+            ),
+            observation_map=self._make_linear_keras_model(
+                self.F.shape[0], self.H.shape[0], self.H.T
+            ),
             transition_covariance=self.Q,
             observation_covariance=self.R,
             x0=x_t[0],
@@ -151,8 +179,12 @@ class TestStateSpaceUkf(TestBase):
     def setUpClass(cls):
         super(TestStateSpaceUkf, cls).setUpClass()
         cls.ukf = AdditiveUKF(
-            transition_map=TestAdditiveUKF._make_linear_keras_model(cls.F.shape[0], cls.F.shape[0], cls.F.T),
-            observation_map=TestAdditiveUKF._make_linear_keras_model(cls.F.shape[0], cls.H.shape[0], cls.H.T),
+            transition_map=TestAdditiveUKF._make_linear_keras_model(
+                cls.F.shape[0], cls.F.shape[0], cls.F.T
+            ),
+            observation_map=TestAdditiveUKF._make_linear_keras_model(
+                cls.F.shape[0], cls.H.shape[0], cls.H.T
+            ),
             transition_covariance=cls.Q,
             observation_covariance=cls.R,
             x0=np.zeros(cls.Q.shape[0]),
@@ -160,17 +192,23 @@ class TestStateSpaceUkf(TestBase):
             dtype=TF_DTYPE,
         )
         cls.ssm_ukf = StateSpace(
-            {"transition_map": TestAdditiveUKF._make_linear_keras_model(cls.F.shape[0], cls.F.shape[0],
-                                                                        cls.F.T),
-             "transition_covariance": cls.Q},
-            {"observation_map": TestAdditiveUKF._make_linear_keras_model(cls.F.shape[0],
-                                                                         cls.H.shape[0], cls.H.T),
-             "observation_covariance": cls.R},
+            {
+                "transition_map": TestAdditiveUKF._make_linear_keras_model(
+                    cls.F.shape[0], cls.F.shape[0], cls.F.T
+                ),
+                "transition_covariance": cls.Q,
+            },
+            {
+                "observation_map": TestAdditiveUKF._make_linear_keras_model(
+                    cls.F.shape[0], cls.H.shape[0], cls.H.T
+                ),
+                "observation_covariance": cls.R,
+            },
             np.zeros(cls.n),
             np.ones(cls.n),
             x0=np.zeros(cls.Q.shape[0]),
             P0=np.eye(cls.Q.shape[0]),
-            filter_type=FilterType.UnscentedKalmanFilter
+            filter_type=FilterType.UnscentedKalmanFilter,
         )
 
     def test_predict(self):

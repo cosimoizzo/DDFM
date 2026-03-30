@@ -33,7 +33,7 @@ class BaseFilter(ABC):
         pass
 
     def get_default_initial_state(self) -> Tuple[tf.Tensor, tf.Tensor]:
-            return self.x0, self.P0
+        return self.x0, self.P0
 
     def predict(self, y: np.ndarray, steps_ahead: int):
         """

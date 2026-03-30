@@ -60,7 +60,9 @@ class KalmanFilter(BaseFilter):
             else observation_covariance
         )
         if transition_offsets is None:
-            self.transition_offsets = tf.zeros(transition_covariance.shape[0], dtype=dtype)
+            self.transition_offsets = tf.zeros(
+                transition_covariance.shape[0], dtype=dtype
+            )
         else:
             self.transition_offsets = (
                 tf.convert_to_tensor(transition_offsets, dtype=dtype)
@@ -68,7 +70,9 @@ class KalmanFilter(BaseFilter):
                 else transition_offsets
             )
         if observation_offsets is None:
-            self.observation_offsets = tf.zeros(observation_covariance.shape[0], dtype=dtype)
+            self.observation_offsets = tf.zeros(
+                observation_covariance.shape[0], dtype=dtype
+            )
         else:
             self.observation_offsets = (
                 tf.convert_to_tensor(observation_offsets, dtype=dtype)
@@ -101,7 +105,10 @@ class KalmanFilter(BaseFilter):
         State prediction step.
         """
         x_pred = tf.linalg.matvec(self.transition_map, x) + self.transition_offsets
-        P_pred = self.transition_map @ P @ tf.transpose(self.transition_map) + self.transition_covariance
+        P_pred = (
+            self.transition_map @ P @ tf.transpose(self.transition_map)
+            + self.transition_covariance
+        )
         return x_pred, P_pred
 
     @tf.function
@@ -114,7 +121,9 @@ class KalmanFilter(BaseFilter):
         nan_mask = tf.math.is_nan(y)
         nan_mask = tf.reshape(nan_mask, [-1])
 
-        y_pred = tf.linalg.matvec(self.observation_map, x_pred) + self.observation_offsets
+        y_pred = (
+            tf.linalg.matvec(self.observation_map, x_pred) + self.observation_offsets
+        )
         tmp_cov = tf.identity(self.observation_covariance)
         tmp_observation_map = tf.identity(self.observation_map)
 
@@ -130,10 +139,10 @@ class KalmanFilter(BaseFilter):
             tmp_observation_map = tmp_observation_map * mask_float[:, tf.newaxis]
             return tmp_cov, y_pred, tmp_observation_map
 
-        tmp_cov, y_pred, tmp_observation_map= tf.cond(
+        tmp_cov, y_pred, tmp_observation_map = tf.cond(
             tf.reduce_any(nan_mask),
             true_fn=lambda: _apply_nan_mask(tmp_cov, y_pred, tmp_observation_map),
-            false_fn=lambda: (tmp_cov, y_pred, tmp_observation_map)
+            false_fn=lambda: (tmp_cov, y_pred, tmp_observation_map),
         )
         Pxy = tf.linalg.matmul(tmp_observation_map, P_pred)
         S = tf.linalg.matmul(Pxy, tf.transpose(tmp_observation_map)) + tmp_cov
@@ -142,7 +151,9 @@ class KalmanFilter(BaseFilter):
         x_upd = x_pred + tf.linalg.matvec(K, keras.ops.nan_to_num(y, nan=0.0) - y_pred)
         I_KH = tf.eye(self.state_size, dtype=self.dtype) - K @ self.observation_map
         # Joseph form
-        P_upd = I_KH @ P_pred @ tf.transpose(I_KH) + K @ self.observation_covariance @ tf.transpose(K)
+        P_upd = I_KH @ P_pred @ tf.transpose(
+            I_KH
+        ) + K @ self.observation_covariance @ tf.transpose(K)
         return x_upd, P_upd
 
     def _get_filter_function(self):
@@ -183,15 +194,25 @@ class KalmanFilter(BaseFilter):
         predicted_state_covariance = tf.convert_to_tensor(
             predicted_state_covariance, dtype=self.dtype
         )
-        y_pred = tf.linalg.matvec(self.observation_map, predicted_state_mean) + self.observation_offsets
-        S_pred = self.observation_map @ predicted_state_covariance @ tf.transpose(self.observation_map)
+        y_pred = (
+            tf.linalg.matvec(self.observation_map, predicted_state_mean)
+            + self.observation_offsets
+        )
+        S_pred = (
+            self.observation_map
+            @ predicted_state_covariance
+            @ tf.transpose(self.observation_map)
+        )
         # steps ahead
         if steps_ahead > 0:
 
             def scan_fn(carry, _):
                 x, P, _, _ = carry
                 x_pred, P_pred = self._predict_states_one_step(x, P)
-                y_pred = tf.linalg.matvec(self.observation_map, x_pred) + self.observation_offsets
+                y_pred = (
+                    tf.linalg.matvec(self.observation_map, x_pred)
+                    + self.observation_offsets
+                )
                 S = self.observation_map @ P_pred @ tf.transpose(self.observation_map)
                 return x_pred, P_pred, y_pred, S
 
@@ -203,7 +224,7 @@ class KalmanFilter(BaseFilter):
                     tf.convert_to_tensor(predicted_state_mean, dtype=self.dtype),
                     tf.convert_to_tensor(predicted_state_covariance, dtype=self.dtype),
                     y_pred,
-                    S_pred
+                    S_pred,
                 ),
             )
             y_pred = tf.concat([y_pred[tf.newaxis], y_preds], axis=0)

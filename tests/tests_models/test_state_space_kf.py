@@ -11,6 +11,7 @@ R2_THRESHOLD_FILTER = 0.99
 # Missing data reduce accuracy
 R2_THRESHOLD_MISSING = 0.95
 
+
 class TestBase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -18,7 +19,7 @@ class TestBase(unittest.TestCase):
         cls.n = 5
         cls.d = 2
         cls.F = 0.9 * np.eye(cls.d)
-        cls.F[0,1] = -0.5
+        cls.F[0, 1] = -0.5
         cls.H = cls.rng.normal(size=(cls.n, cls.d))
         cls.Q = np.eye(cls.d)
         cls.R = 0.1 * np.eye(cls.n)
@@ -65,8 +66,8 @@ class TestKalmanFilter(TestBase):
             observation_map=self.H,
             transition_covariance=self.Q,
             observation_covariance=self.R,
-            x0 = np.zeros(self.d),
-            P0 = np.eye(self.d),
+            x0=np.zeros(self.d),
+            P0=np.eye(self.d),
         )
         hat_mod_x_t = kalman_filter_tf.filter(y_t)[0]
         r2 = 1 - np.sum(np.power(hat_mod_x_t - x_t, 2)) / np.sum(np.power(x_t, 2))

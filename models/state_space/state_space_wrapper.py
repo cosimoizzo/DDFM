@@ -27,7 +27,7 @@ class StateSpace:
         x0: np.ndarray = None,
         P0: np.ndarray = None,
         filter_type: FilterType = FilterType.KalmanFilter,
-        dtype: Optional[tf.DType] = tf.float64
+        dtype: Optional[tf.DType] = tf.float64,
     ):
         """
         The init method will build the state space model according to the selected filter.
@@ -103,7 +103,7 @@ class StateSpace:
             x0=self.x0,
             P0=self.P0,
             observation_offsets=self.observation_offsets,
-            dtype=self.dtype
+            dtype=self.dtype,
         )
 
     def _build_ukf(self, transition_params: dict, measurement_params: dict) -> None:
@@ -135,7 +135,7 @@ class StateSpace:
             observation_covariance=self.observation_covariance,
             x0=self.x0,
             P0=self.P0,
-            dtype=self.dtype
+            dtype=self.dtype,
         )
 
     def predict(self, y: np.ndarray, steps_ahead: int) -> Tuple[np.ndarray, np.ndarray]:

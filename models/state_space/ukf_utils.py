@@ -45,8 +45,12 @@ class AdditiveUKF(BaseFilter):
             dtype:
 
         """
-        if not isinstance(transition_map, keras.Model) or not isinstance(observation_map, keras.Model):
-            raise ValueError("transition_map and observation_map must be of type keras.Model")
+        if not isinstance(transition_map, keras.Model) or not isinstance(
+            observation_map, keras.Model
+        ):
+            raise ValueError(
+                "transition_map and observation_map must be of type keras.Model"
+            )
         self.transition_map = transition_map
         self.observation_map = observation_map
         self.dtype = dtype
@@ -79,9 +83,7 @@ class AdditiveUKF(BaseFilter):
         ), "Dimensions mismatch."
         self.state_size = state_size
         self.L = tf.cast(self.state_size, dtype=dtype)
-        self.lamb = tf.cast(
-            (alpha**2) * (state_size + kappa) - state_size, dtype=dtype
-        )
+        self.lamb = tf.cast((alpha**2) * (state_size + kappa) - state_size, dtype=dtype)
         self.wm, self.wc = self._compute_weights()
 
     def get_default_initial_state(self) -> Tuple[tf.Tensor, tf.Tensor]:
@@ -96,9 +98,7 @@ class AdditiveUKF(BaseFilter):
 
         # Overwrite the 0th weight
         wm0 = self.lamb / denom
-        wc0 = self.lamb / denom + (
-            1.0 - self.alpha**2 + self.beta
-        )
+        wc0 = self.lamb / denom + (1.0 - self.alpha**2 + self.beta)
 
         wm = tf.tensor_scatter_nd_update(wm, [[0]], [wm0])
         wc = tf.tensor_scatter_nd_update(wc, [[0]], [wc0])
@@ -160,7 +160,7 @@ class AdditiveUKF(BaseFilter):
         tmp_cov, sigmas_obs = tf.cond(
             tf.reduce_any(nan_mask),
             true_fn=lambda: _apply_nan_mask(tmp_cov, sigmas_obs),
-            false_fn=lambda: (tmp_cov, sigmas_obs)
+            false_fn=lambda: (tmp_cov, sigmas_obs),
         )
 
         y_pred, S = self._unscented_transform(sigmas_obs, tmp_cov)
@@ -247,7 +247,7 @@ class AdditiveUKF(BaseFilter):
                     tf.convert_to_tensor(predicted_state_mean, dtype=self.dtype),
                     tf.convert_to_tensor(predicted_state_covariance, dtype=self.dtype),
                     y_pred,
-                    S_pred
+                    S_pred,
                 ),
             )
             y_pred = tf.concat([y_pred[tf.newaxis], y_preds], axis=0)

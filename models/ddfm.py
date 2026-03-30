@@ -47,7 +47,7 @@ class DDFM:
         tolerance: float = 0.0005,
         disp: int = 10,
         logger=logging.getLogger("DDFM"),
-        dtype: Optional[tf.DType] = tf.float32
+        dtype: Optional[tf.DType] = tf.float32,
     ):
         """
 
@@ -266,7 +266,7 @@ class DDFM:
             filter_type=self._filter_type,
             x0=x_t[:, 0],
             P0=np.eye(x_t.shape[0]),
-            dtype=self.dtype
+            dtype=self.dtype,
         )
 
     def _init_optimizer(self):
@@ -307,7 +307,9 @@ class DDFM:
 
     def _build_model(self) -> None:
         # encoder
-        inputs = keras.Input(shape=(int((self.lags_input + 1) * self.data.shape[1]),), dtype=self.dtype)
+        inputs = keras.Input(
+            shape=(int((self.lags_input + 1) * self.data.shape[1]),), dtype=self.dtype
+        )
         len_encoder = len(self.structure_encoder)
         if len_encoder > 1:
             encoded = layers.Dense(
@@ -315,7 +317,7 @@ class DDFM:
                 activation=self.link,
                 bias_initializer="zeros",
                 kernel_initializer=tf.keras.initializers.GlorotNormal(seed=self.seed),
-                dtype=self.dtype
+                dtype=self.dtype,
             )(inputs)
             for c, j in enumerate(self.structure_encoder[1:]):
                 if self.batch_norm:
@@ -331,7 +333,7 @@ class DDFM:
                         seed=self.seed + c + 1
                     ),
                     bias_initializer="zeros",
-                    dtype=self.dtype
+                    dtype=self.dtype,
                 )(encoded)
         else:
             encoded = layers.Dense(
@@ -340,7 +342,7 @@ class DDFM:
                 kernel_initializer=tf.keras.initializers.GlorotNormal(
                     seed=self.seed + 1
                 ),
-                dtype=self.dtype
+                dtype=self.dtype,
             )(inputs)
 
         self.encoder = keras.Model(inputs, encoded)
@@ -354,7 +356,7 @@ class DDFM:
                     seed=self.seed + len_encoder + 1
                 ),
                 bias_initializer="zeros",
-                dtype=self.dtype
+                dtype=self.dtype,
             )(latent_inputs)
             for c, j in enumerate(self.structure_decoder[1:]):
                 decoded = layers.Dense(
@@ -364,7 +366,7 @@ class DDFM:
                         seed=self.seed + len_encoder + 2 + c
                     ),
                     bias_initializer="zeros",
-                    dtype=self.dtype
+                    dtype=self.dtype,
                 )(decoded)
             output = layers.Dense(
                 self.data.shape[1],
@@ -373,7 +375,7 @@ class DDFM:
                     seed=self.seed + len_encoder + 2 + len(self.structure_decoder)
                 ),
                 use_bias=self.use_bias,
-                dtype=self.dtype
+                dtype=self.dtype,
             )(decoded)
         else:
             output = layers.Dense(
@@ -383,18 +385,22 @@ class DDFM:
                     seed=self.seed + len_encoder + 1
                 ),
                 use_bias=self.use_bias,
-                dtype=self.dtype
+                dtype=self.dtype,
             )(latent_inputs)
         # If quarterly variables present, then add MM restrictions
         if self.quarterly_start is not None:
-            output = MixedFreqMQLayer(self.data.shape[1], self.quarterly_start, dtype=self.dtype)(output)
+            output = MixedFreqMQLayer(
+                self.data.shape[1], self.quarterly_start, dtype=self.dtype
+            )(output)
         self.decoder = keras.Model(latent_inputs, output)
         outputs_ = self.decoder(self.encoder(inputs))
         # autoencoder
         self.autoencoder = keras.Model(inputs, outputs_)
         if self.var_loss_weight > 0:
             self.var_layer = VARLayerClosedForm(
-                n_vars=self.structure_encoder[-1], var_order=self.factor_order, dtype=self.dtype
+                n_vars=self.structure_encoder[-1],
+                var_order=self.factor_order,
+                dtype=self.dtype,
             )
             self.var_autoencoder = VARAutoencoder(
                 self.encoder,
