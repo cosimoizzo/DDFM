@@ -7,8 +7,8 @@ class VARLayerClosedForm(Layer):
     Vector Autoregressive (VAR) Layer with closed form VAR dynamics estimation
     """
 
-    def __init__(self, n_vars: int, var_order: int = 1, **kwargs):
-        super(VARLayerClosedForm, self).__init__(**kwargs)
+    def __init__(self, n_vars: int, var_order: int = 1, dtype: tf.DType=tf.float32, **kwargs):
+        super(VARLayerClosedForm, self).__init__(dtype=dtype, **kwargs)
         self.n_vars = n_vars
         self.var_order = var_order
         self.coefficients = None
@@ -17,6 +17,7 @@ class VARLayerClosedForm(Layer):
             initializer="zeros",
             trainable=False,
             name="VAR_coefficients",
+            dtype=dtype,
         )
 
     def call(self, inputs, return_valid_only=False):
@@ -65,8 +66,8 @@ class VARAutoencoder(tf.keras.Model):
         var_layer: VARLayerClosedForm,
         decoder: tf.keras.Model,
         var_loss_weight: float = 1.0,
-        var_loss=tf.keras.losses.MeanSquaredError(),
-        ae_loss=tf.keras.losses.MeanSquaredError(),
+        var_loss=None,
+        ae_loss=None,
     ):
         super().__init__()
         self.encoder = encoder
@@ -74,8 +75,8 @@ class VARAutoencoder(tf.keras.Model):
         self.decoder = decoder
         self.var_order = self.var_layer.var_order
         self.var_loss_weight = var_loss_weight
-        self.var_loss = var_loss
-        self.ae_loss = ae_loss
+        self.var_loss = var_loss if var_loss is not None else tf.keras.losses.MeanSquaredError(dtype=var_layer.dtype)
+        self.ae_loss = ae_loss if ae_loss is not None else tf.keras.losses.MeanSquaredError(dtype=var_layer.dtype)
 
     def call(self, x, training=False):
         z_latent = self.encoder(x)

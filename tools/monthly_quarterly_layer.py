@@ -7,8 +7,8 @@ class MixedFreqMQLayer(keras.layers.Layer):
     A layer implementing monthly quarterly mixed frequency aggregation following Mariano and Murasawa (2003).
     """
 
-    def __init__(self, input_dim: int, start_quarterly: int):
-        super().__init__()
+    def __init__(self, input_dim: int, start_quarterly: int, dtype: tf.DType = tf.float32):
+        super().__init__(dtype=dtype)
         self.start_quarterly = start_quarterly
         self.aggr_restr = [1, 2, 3, 2, 1]
         n_q = input_dim - start_quarterly
@@ -31,6 +31,7 @@ class MixedFreqMQLayer(keras.layers.Layer):
             shape=(input_dim * 5, input_dim),
             initializer=tf.keras.initializers.Constant(mm_mq),
             trainable=False,
+            dtype=dtype,
         )
 
     def call(self, inputs):

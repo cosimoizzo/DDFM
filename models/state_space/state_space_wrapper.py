@@ -2,7 +2,7 @@ from typing import Tuple
 import numpy as np
 from enum import StrEnum
 
-from models.state_space.kf_utils import KFMod
+from models.state_space.kf_utils_new import KalmanFilter
 from models.state_space.ukf_utils import AdditiveUKF
 
 
@@ -83,19 +83,21 @@ class StateSpace:
         """
 
         self.observation_map, self.observation_covariance = (
-            measurement_params["observation_matrices"],
+            measurement_params["observation_map"],
             measurement_params["observation_covariance"],
         )
         self.observation_offsets = measurement_params.get("observation_offsets", None)
         self.transition_map, self.transition_covariance = (
-            transition_params["transition_matrices"],
+            transition_params["transition_map"],
             transition_params["transition_covariance"],
         )
-        self.ssm_repr = KFMod(
-            transition_matrices=self.transition_map,
-            observation_matrices=self.observation_map,
+        self.ssm_repr = KalmanFilter(
+            transition_map=self.transition_map,
+            observation_map=self.observation_map,
             transition_covariance=self.transition_covariance,
             observation_covariance=self.observation_covariance,
+            x0=self.x0,
+            P0=self.P0,
             observation_offsets=self.observation_offsets,
         )
 

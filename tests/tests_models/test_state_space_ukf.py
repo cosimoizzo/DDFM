@@ -4,9 +4,9 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 
-from tests.tests_models.test_state_space_kf import TestBase, R2_THRESHOLD_FILTER
+from tests.tests_models.test_state_space_kf_new import TestBase, R2_THRESHOLD_FILTER
 from models.state_space.state_space_wrapper import StateSpace, FilterType
-from models.state_space.kf_utils import KFMod
+from models.state_space.kf_utils_new import KalmanFilter
 from models.state_space.ukf_utils import AdditiveUKF
 
 TF_DTYPE = tf.float64
@@ -30,11 +30,13 @@ class TestAdditiveUKF(TestBase):
 
     def test_filter(self):
         y_t, x_t = self._gen_values()
-        kalman_filter_mod = KFMod(
-            transition_matrices=self.F,
-            observation_matrices=self.H,
+        kalman_filter = KalmanFilter(
+            transition_map=self.F,
+            observation_map=self.H,
             transition_covariance=self.Q,
             observation_covariance=self.R,
+            x0=x_t[0],
+            P0=np.cov(x_t, rowvar=False),
         )
         ukf = AdditiveUKF(
             transition_map=self._make_linear_keras_model(self.F.shape[0], self.F.shape[0], self.F.T),
@@ -45,18 +47,20 @@ class TestAdditiveUKF(TestBase):
             P0=np.cov(x_t, rowvar=False),
             dtype=TF_DTYPE,
         )
-        hat_mod_x_t = kalman_filter_mod.filter(y_t)[0]
+        hat_mod_x_t = kalman_filter.filter(y_t)[0]
         hat_ukf_x_t = ukf.filter(y_t)[0]
         r2 = 1 - np.sum(np.power(hat_ukf_x_t - hat_mod_x_t, 2)) / np.sum(np.power(hat_mod_x_t, 2))
         self.assertGreater(r2, R2_THRESHOLD_FILTER)
 
     def test_smooth(self):
         y_t, x_t = self._gen_values()
-        kalman_filter_mod = KFMod(
-            transition_matrices=self.F,
-            observation_matrices=self.H,
+        kalman_filter = KalmanFilter(
+            transition_map=self.F,
+            observation_map=self.H,
             transition_covariance=self.Q,
             observation_covariance=self.R,
+            x0=x_t[0],
+            P0=np.cov(x_t, rowvar=False),
         )
         ukf = AdditiveUKF(
             transition_map=self._make_linear_keras_model(self.F.shape[0], self.F.shape[0], self.F.T),
@@ -67,18 +71,20 @@ class TestAdditiveUKF(TestBase):
             P0=np.cov(x_t, rowvar=False),
             dtype=TF_DTYPE,
         )
-        hat_mod_x_t = kalman_filter_mod.smooth(y_t)[0]
+        hat_mod_x_t = kalman_filter.smooth(y_t)[0]
         hat_ukf_x_t = ukf.smooth(y_t)[0]
         r2 = 1 - np.sum(np.power(hat_ukf_x_t - hat_mod_x_t, 2)) / np.sum(np.power(hat_mod_x_t, 2))
         self.assertGreater(r2, R2_THRESHOLD_FILTER)
 
     def test_smooth_with_missing(self):
         y_t, x_t = self._gen_values(perc_missing=0.1)
-        kalman_filter_mod = KFMod(
-            transition_matrices=self.F,
-            observation_matrices=self.H,
+        kalman_filter = KalmanFilter(
+            transition_map=self.F,
+            observation_map=self.H,
             transition_covariance=self.Q,
             observation_covariance=self.R,
+            x0=x_t[0],
+            P0=np.cov(x_t, rowvar=False),
         )
         ukf = AdditiveUKF(
             transition_map=self._make_linear_keras_model(self.F.shape[0], self.F.shape[0], self.F.T),
@@ -89,7 +95,7 @@ class TestAdditiveUKF(TestBase):
             P0=np.cov(x_t, rowvar=False),
             dtype=TF_DTYPE,
         )
-        hat_mod_x_t = kalman_filter_mod.smooth(y_t)[0]
+        hat_mod_x_t = kalman_filter.smooth(y_t)[0]
         hat_ukf_x_t = ukf.smooth(y_t)[0]
         r2 = 1 - np.sum(np.power(hat_ukf_x_t - hat_mod_x_t, 2)) / np.sum(np.power(hat_mod_x_t, 2))
         self.assertGreater(r2, R2_THRESHOLD_FILTER)

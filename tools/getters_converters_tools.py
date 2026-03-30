@@ -126,8 +126,7 @@ def get_transition_params(
         quarterly_start: if flow quarterly idio AR1s are present, specify index start
 
     Returns:
-        autoregressive matrix, diagonal residual covariance matrix, unconditional mean, unconditional variance,
-            latent states (k x T)
+        autoregressive matrix, diagonal residual covariance matrix, latent states (k x T)
     """
     if factor_order < 1:
         raise ValueError("factor_order must be >= 1")

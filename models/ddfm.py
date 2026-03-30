@@ -7,7 +7,7 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 
-from models.state_space.state_space_wrapper import StateSpace
+from models.state_space.state_space_wrapper import StateSpace, FilterType
 from models.vector_autoregressive import VARLayerClosedForm, VARAutoencoder
 from tools.loss_tools import mse_missing, np_mse_missing
 from tools.getters_converters_tools import (
@@ -47,6 +47,7 @@ class DDFM:
         tolerance: float = 0.0005,
         disp: int = 10,
         logger=logging.getLogger("DDFM"),
+        dtype: Optional[tf.DType] = tf.float32
     ):
         """
 
@@ -71,6 +72,8 @@ class DDFM:
             max_iter: maximum number of iterations
             tolerance: the tolerance to stop iterations
             disp: display intermediate results every "disp" iterations
+            logger:
+            dtype:
 
         """
         # common factors
@@ -86,9 +89,9 @@ class DDFM:
         self.batch_norm = batch_norm
         self.link = link
         if self.structure_decoder is None:
-            self._filter_type = "KalmanFilter"
+            self._filter_type = FilterType.KalmanFilter
         else:
-            self._filter_type = "ToBeDefined"
+            self._filter_type = FilterType.UnscentedKalmanFilter
         # seed setting
         self.seed = seed
         self.rng = np.random.RandomState(seed)
@@ -107,6 +110,7 @@ class DDFM:
         self.learning_rate = learning_rate
         self.clipnorm = clipnorm
         self.logger = logger
+        self.dtype = dtype
         # initialize relevant attributes
         self.quarterly_start = None
         self._optimizer = None
@@ -217,6 +221,7 @@ class DDFM:
         Returns:
             The state space object
         """
+        # TODO: need to extend to unscented kalman filter and pass the types.
         # extract common factors
         f_t = np.mean(self.factors_ae, axis=0)
         # get params from decoder (measurement equation)
@@ -247,17 +252,19 @@ class DDFM:
         self._latents["ae_states"] = x_t
         R = np.eye(self.idio_residuals.shape[1]) * 1e-15
         measurement = {
-            "observation_matrices": H,
+            "observation_map": H,
             "observation_covariance": R,
             "observation_offsets": bs,
         }
-        transition = {"transition_matrices": F, "transition_covariance": Q}
+        transition = {"transition_map": F, "transition_covariance": Q}
         return StateSpace(
             transition,
             measurement,
             mean_y=self.mean_data,
             sigma_y=self.sigma_data,
             filter_type=self._filter_type,
+            x0=x_t[:, 0],
+            P0=Q + F @ Q @ F.T
         )
 
     def _init_optimizer(self):
@@ -294,11 +301,11 @@ class DDFM:
         # (missing data imputation and idiosyncratic one side filtering)
         self._data_imputed, self._data_mod = self.data.copy(), self.data.copy()
         self._target = self.data[self.lags_input :].values
-        self._target_tf = tf.convert_to_tensor(self._target, dtype=tf.float32)
+        self._target_tf = tf.convert_to_tensor(self._target, dtype=self.dtype)
 
     def _build_model(self) -> None:
         # encoder
-        inputs = keras.Input(shape=(int((self.lags_input + 1) * self.data.shape[1]),))
+        inputs = keras.Input(shape=(int((self.lags_input + 1) * self.data.shape[1]),), dtype=self.dtype)
         len_encoder = len(self.structure_encoder)
         if len_encoder > 1:
             encoded = layers.Dense(
@@ -306,6 +313,7 @@ class DDFM:
                 activation=self.link,
                 bias_initializer="zeros",
                 kernel_initializer=tf.keras.initializers.GlorotNormal(seed=self.seed),
+                dtype=self.dtype
             )(inputs)
             for c, j in enumerate(self.structure_encoder[1:]):
                 if self.batch_norm:
@@ -321,6 +329,7 @@ class DDFM:
                         seed=self.seed + c + 1
                     ),
                     bias_initializer="zeros",
+                    dtype=self.dtype
                 )(encoded)
         else:
             encoded = layers.Dense(
@@ -329,6 +338,7 @@ class DDFM:
                 kernel_initializer=tf.keras.initializers.GlorotNormal(
                     seed=self.seed + 1
                 ),
+                dtype=self.dtype
             )(inputs)
 
         self.encoder = keras.Model(inputs, encoded)
@@ -342,6 +352,7 @@ class DDFM:
                     seed=self.seed + len_encoder + 1
                 ),
                 bias_initializer="zeros",
+                dtype=self.dtype
             )(latent_inputs)
             for c, j in enumerate(self.structure_decoder[1:]):
                 decoded = layers.Dense(
@@ -351,6 +362,7 @@ class DDFM:
                         seed=self.seed + len_encoder + 2 + c
                     ),
                     bias_initializer="zeros",
+                    dtype=self.dtype
                 )(decoded)
             output = layers.Dense(
                 self.data.shape[1],
@@ -359,6 +371,7 @@ class DDFM:
                     seed=self.seed + len_encoder + 2 + len(self.structure_decoder)
                 ),
                 use_bias=self.use_bias,
+                dtype=self.dtype
             )(decoded)
         else:
             output = layers.Dense(
@@ -368,17 +381,18 @@ class DDFM:
                     seed=self.seed + len_encoder + 1
                 ),
                 use_bias=self.use_bias,
+                dtype=self.dtype
             )(latent_inputs)
         # If quarterly variables present, then add MM restrictions
         if self.quarterly_start is not None:
-            output = MixedFreqMQLayer(self.data.shape[1], self.quarterly_start)(output)
+            output = MixedFreqMQLayer(self.data.shape[1], self.quarterly_start, dtype=self.dtype)(output)
         self.decoder = keras.Model(latent_inputs, output)
         outputs_ = self.decoder(self.encoder(inputs))
         # autoencoder
         self.autoencoder = keras.Model(inputs, outputs_)
         if self.var_loss_weight > 0:
             self.var_layer = VARLayerClosedForm(
-                n_vars=self.structure_encoder[-1], var_order=self.factor_order
+                n_vars=self.structure_encoder[-1], var_order=self.factor_order, dtype=self.dtype
             )
             self.var_autoencoder = VARAutoencoder(
                 self.encoder,
@@ -470,7 +484,7 @@ class DDFM:
             x_sim_noisy = np.tile(self._data_tmp.values, (self.epochs, 1))
             # Column order: [y_t, y_{t-1}, ..., y_{t-lags}]
             x_sim_noisy[:, :D] -= idio_residuals_sims
-            x_sim_noisy = tf.convert_to_tensor(x_sim_noisy, dtype=tf.float32)
+            x_sim_noisy = tf.convert_to_tensor(x_sim_noisy, dtype=self.dtype)
             fit_method(x_sim_noisy)
             # update factors: average over all predictions from the MC samples
             factors_ae_sims = self.encoder(x_sim_noisy)
@@ -569,7 +583,7 @@ class DDFM:
 
         @tf.function(
             input_signature=[
-                tf.TensorSpec(shape=[None, D * (self.lags_input + 1)], dtype=tf.float32)
+                tf.TensorSpec(shape=[None, D * (self.lags_input + 1)], dtype=self.dtype)
             ]
         )
         def train_all_epochs(x_sim_noisy: tf.Tensor):
@@ -598,7 +612,7 @@ class DDFM:
 
         @tf.function(
             input_signature=[
-                tf.TensorSpec(shape=[None, D * (self.lags_input + 1)], dtype=tf.float32)
+                tf.TensorSpec(shape=[None, D * (self.lags_input + 1)], dtype=self.dtype)
             ]
         )
         def train_all_epochs(x_sim_noisy: tf.Tensor):
