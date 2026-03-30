@@ -1,8 +1,10 @@
-from typing import Tuple
-import numpy as np
+from typing import Tuple, Optional
 from enum import StrEnum
 
-from models.state_space.kf_utils_new import KalmanFilter
+import numpy as np
+import tensorflow as tf
+
+from models.state_space.kf_utils import KalmanFilter
 from models.state_space.ukf_utils import AdditiveUKF
 
 
@@ -25,6 +27,7 @@ class StateSpace:
         x0: np.ndarray = None,
         P0: np.ndarray = None,
         filter_type: FilterType = FilterType.KalmanFilter,
+        dtype: Optional[tf.DType] = tf.float64
     ):
         """
         The init method will build the state space model according to the selected filter.
@@ -50,6 +53,7 @@ class StateSpace:
         self.transition_covariance = None
         self.observation_offsets = None
         self.ssm_repr = None
+        self.dtype = dtype
         if filter_type == FilterType.KalmanFilter:
             # build a linear gaussian state-space model
             self._build_lgssm(transition_params, measurement_params)
@@ -99,6 +103,7 @@ class StateSpace:
             x0=self.x0,
             P0=self.P0,
             observation_offsets=self.observation_offsets,
+            dtype=self.dtype
         )
 
     def _build_ukf(self, transition_params: dict, measurement_params: dict) -> None:
@@ -130,6 +135,7 @@ class StateSpace:
             observation_covariance=self.observation_covariance,
             x0=self.x0,
             P0=self.P0,
+            dtype=self.dtype
         )
 
     def predict(self, y: np.ndarray, steps_ahead: int) -> Tuple[np.ndarray, np.ndarray]:

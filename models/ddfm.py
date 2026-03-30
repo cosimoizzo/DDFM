@@ -60,6 +60,7 @@ class DDFM:
             factor_order: number of lags in the transition equation for the dynamics of the common factors
             var_loss_weight: if > 0, then estimate jointly the var dynamics of the latent factors and add VAR forecast
                 error term in the reconstruction loss of the autoencoder
+                error term in the reconstruction loss of the autoencoder
             seed: seed to control randomness for replicability
             batch_norm: whether to add batch norm layers into the encoder
             link: the type of link/activation function
@@ -264,7 +265,8 @@ class DDFM:
             sigma_y=self.sigma_data,
             filter_type=self._filter_type,
             x0=x_t[:, 0],
-            P0=Q + F @ Q @ F.T
+            P0=np.eye(x_t.shape[0]),
+            dtype=self.dtype
         )
 
     def _init_optimizer(self):
