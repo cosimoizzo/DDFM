@@ -7,7 +7,7 @@ from tensorflow import keras
 from tensorflow.keras import layers
 
 from tools.getters_converters_tools import (
-    convert_decoder_to_numpy,
+    get_ssm_from_decoder,
     get_transition_params,
     get_idio,
     get_data_with_lags,
@@ -15,34 +15,34 @@ from tools.getters_converters_tools import (
 from tools.monthly_quarterly_layer import MixedFreqMQLayer
 
 
+def build_keras_model(
+        input_dim=4,
+        output_dim=10,
+        use_bias=True,
+        use_mixed_freq=False,
+):
+    input = layers.Input(shape=(input_dim,))
+    output = layers.Dense(output_dim, use_bias=use_bias)(input)
+    if use_mixed_freq:
+        output = MixedFreqMQLayer(output_dim, start_quarterly=8)(output)
+    model = keras.Model(inputs=input, outputs=output)
+    return model
+
+
 class TestGettersAndConvertersTools(unittest.TestCase):
     @classmethod
     def setUpClass(cls, seed: int = 123):
         cls.rng = np.random.default_rng(seed)
 
-    def test_convert_decoder_to_numpy(self):
-        def build_two_layer_model(
-            input_dim=3,
-            hidden_dim=4,
-            output_dim=10,
-            use_bias=True,
-            use_mixed_freq=False,
-        ):
-            all_layers = [
-                layers.Input(shape=(input_dim,)),
-                layers.Dense(hidden_dim, activation="relu", use_bias=True),
-                layers.Dense(output_dim, use_bias=use_bias),
-            ]
-            if use_mixed_freq:
-                all_layers.append(MixedFreqMQLayer(output_dim, start_quarterly=8))
-            model = keras.Sequential(all_layers)
-            return model
-
+    def test_get_ssm_from_decoder_1(self):
+        """
+        Testing case with structure decoder None and numpy matrices output.
+        """
         # test factor order 1 and 2 with and without bias, with and without mixed freq
         for use_mixed_freq in [True, False]:
             for factor_order in [1, 2]:
                 for use_bias in [True, False]:
-                    model = build_two_layer_model(
+                    model = build_keras_model(
                         use_bias=use_bias, use_mixed_freq=use_mixed_freq
                     )
                     last_layer = (
@@ -55,11 +55,12 @@ class TestGettersAndConvertersTools(unittest.TestCase):
                         if use_bias
                         else last_layer.set_weights([W])
                     )
-                    bs, ws = convert_decoder_to_numpy(
+                    bs, ws = get_ssm_from_decoder(
                         decoder=model,
                         has_bias=use_bias,
                         factor_order=factor_order,
                     )
+                    expected_b = b.copy()
                     # factors, lagged factors, idiosyncratic components
                     if use_mixed_freq:
                         # here also lagged idiosyncratic components
@@ -86,6 +87,7 @@ class TestGettersAndConvertersTools(unittest.TestCase):
                                 ),
                             )
                         )
+                        expected_b[8:] = expected_b[8:] * sum([1, 2, 3, 2, 1])
                     else:
                         expected_ws = (
                             np.hstack((W.T, np.identity(W.shape[1])))
@@ -98,8 +100,46 @@ class TestGettersAndConvertersTools(unittest.TestCase):
                                 )
                             )
                         )
-                    np.testing.assert_array_equal(bs, b)
+                    np.testing.assert_array_equal(bs, expected_b)
                     np.testing.assert_array_equal(ws, expected_ws)
+
+    def test_get_ssm_from_decoder_2(self):
+        """
+        Testing case with structure decoder different from None but such that the output is consistent
+        with the structure decoder equal None and tested in _1.
+        """
+        # test factor order 1 and 2 with and without bias, with and without mixed freq
+        for use_mixed_freq in [True, False]:
+            for factor_order in [1, 2]:
+                for use_bias in [True, False]:
+                    model = build_keras_model(
+                        use_bias=use_bias, use_mixed_freq=use_mixed_freq
+                    )
+                    last_layer = (
+                        model.layers[-2] if use_mixed_freq else model.layers[-1]
+                    )
+                    W = np.array([[j * i for i in range(1, 11)] for j in range(1, 5)])
+                    b = np.arange(0, 10, 1) if use_bias else np.array([0.0] * 10)
+                    (
+                        last_layer.set_weights([W, b])
+                        if use_bias
+                        else last_layer.set_weights([W])
+                    )
+                    bs, ws = get_ssm_from_decoder(
+                        decoder=model,
+                        has_bias=use_bias,
+                        factor_order=factor_order,
+                    )
+                    bs_with_structure_encoder, ws_with_structure_encoder = get_ssm_from_decoder(
+                        decoder=model,
+                        has_bias=use_bias,
+                        factor_order=factor_order,
+                        structure_decoder=(10,)
+                    )
+                    input_test = self.rng.random(size=(25, ws.shape[1]))
+                    self.assertIsNone(bs_with_structure_encoder)
+                    output = ws_with_structure_encoder(input_test)
+                    np.testing.assert_allclose(output.numpy(), input_test @ ws.T + bs[None, :], rtol=1e-5)
 
     def test_get_transition_params(self):
         np.random.seed(0)
@@ -189,6 +229,21 @@ class TestGettersAndConvertersTools(unittest.TestCase):
                         eps_t[factor_order + extended_lags - 1 :, :],
                     )
                 )
+                # compare against the keras model version
+                A_keras, W_keras, x_t_keras = get_transition_params(
+                    f_t,
+                    eps_t,
+                    factor_order=factor_order,
+                    bool_no_miss=bool_no_miss,
+                    extended_factor_lags=extended_lags,
+                    transition_as_keras_model=True,
+                    dtype=tf.float64,
+                )
+                np.testing.assert_allclose(W_keras, W)
+                np.testing.assert_allclose(x_t_keras, x_t)
+                pred_keras = A_keras(x_t.T).numpy()
+                pred_numpy = (A @ x_t).T
+                np.testing.assert_allclose(pred_keras, pred_numpy)
 
     def test_get_idio(self):
         """

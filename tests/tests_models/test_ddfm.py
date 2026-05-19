@@ -1,5 +1,6 @@
 import unittest
 
+import keras
 import numpy as np
 import pandas as pd
 
@@ -16,12 +17,7 @@ class TestDDFM(unittest.TestCase):
         cls.append_to_msg = ""
         cls.sim = SIMULATE(seed=seed, n=40, r=3, poly_degree=1)
         cls.x = cls.sim.simulate(150, portion_missings=0.0)
-        r_f_and_nnlinf = cls.sim.f.shape[1]
-        cls.structure_encoder = (
-            (r_f_and_nnlinf * 6, r_f_and_nnlinf * 4, r_f_and_nnlinf * 2, r_f_and_nnlinf)
-            if cls.sim.poly_degree > 1
-            else (r_f_and_nnlinf,)
-        )
+        cls.structure_encoder = (3,)
 
     def test_fit_predict(self):
         """
@@ -61,10 +57,10 @@ class TestDDFM(unittest.TestCase):
         return ddfm
 
     def _single_test_fit(self, ddfm):
-        factors_hat = np.mean(ddfm.factors_ae, axis=0)
-        r2 = self.sim.evaluate(factors_hat, f_true=self.sim.f[self.lags_input :])
+        last_neurons = np.mean(ddfm.last_neurons, axis=0)
+        r2 = self.sim.evaluate(last_neurons, f_true=self.sim.f[self.lags_input :])
         self.assertGreaterEqual(
-            r2, 0.8, msg=f"r2 should be greater than 0.8{self.append_to_msg}"
+            r2, 0.8, msg=f"r2 should be true and fitted states should be greater than 0.8{self.append_to_msg}"
         )
         predict_from_auto = ddfm.autoencoder(ddfm._data_tmp)
         predict_from_encode_decode = ddfm.decoder(ddfm.encoder(ddfm._data_tmp))
@@ -131,6 +127,14 @@ class TestDDFM(unittest.TestCase):
             np.diag(np.diag(ddfm.state_space.transition_covariance)),
             err_msg=msg_if_fail,
         )
+        # r2 between ssm and encoded factors
+        factors_mean = np.mean(ddfm.last_neurons, axis=0)
+        # TODO: replace with a get factors method?
+        ssm_factors = ddfm.state_space.smooth(self.x)[0][:,:factors_mean.shape[0]]
+        r2 = self.sim.evaluate(ssm_factors, f_true=factors_mean)
+        self.assertGreaterEqual(
+            r2, 0.8, msg=f"r2 between ssm and encoded should be greater than 0.8{self.append_to_msg}"
+        )
 
     def _single_test_predict(self, ddfm):
         mean, covs = ddfm.predict(pd.DataFrame(self.x), steps_ahead=2)
@@ -155,12 +159,7 @@ class TestDDFMMonthlyQuarterly(TestDDFM):
                 cls.idx_quarterly, aggregation=AggregationInstr.MM
             ),
         )
-        r_f_and_nnlinf = cls.sim.f.shape[1]
-        cls.structure_encoder = (
-            (r_f_and_nnlinf * 6, r_f_and_nnlinf * 4, r_f_and_nnlinf * 2, r_f_and_nnlinf)
-            if cls.sim.poly_degree > 1
-            else (r_f_and_nnlinf,)
-        )
+        cls.structure_encoder = (3,)
 
     def _check_state_space(self, ddfm):
         msg_if_fail = f"Failed to build state_space properly {self.append_to_msg}"
@@ -253,6 +252,88 @@ class TestDDFMMonthlyQuarterly(TestDDFM):
     def _get_model(self, structure_encoder, jointly_est_var=False, seed=123):
         ddfm = DDFM(
             structure_encoder=structure_encoder,
+            factor_order=1,
+            lags_input=self.lags_input,
+            use_bias=False,
+            link="relu",
+            max_iter=1000,
+            var_loss_weight=1 if jointly_est_var else 0,
+            seed=seed,
+            clipnorm=5.0,
+        )
+        df_x = pd.DataFrame(self.x)
+        ddfm.fit(df_x, build_state_space=True, vars_mq_restrictions=self.idx_quarterly)
+        return ddfm
+
+
+class TestDDFMMonthlyQuarterlyNonLinDec(TestDDFM):
+    @classmethod
+    def setUpClass(cls):
+        seed = 1234546
+        cls.lags_input = 0
+        cls.append_to_msg = " (mixed frequency with nonlinear decoder)"
+        cls.idx_quarterly = [i for i in range(35, 40)]
+        cls.sim = SIMULATE(seed=seed, n=40, r=3, poly_degree=2, sign_features=3)
+        cls.x = cls.sim.simulate(
+            250,
+            portion_missings=0.05,
+            quarterly_vars=QuarterlyVars(
+                cls.idx_quarterly, aggregation=AggregationInstr.MM
+            ),
+        )
+        cls.structure_encoder = (cls.sim.f.shape[1], 3 * 2, 3)
+        cls.structure_decoder = (3 * 2, cls.sim.f.shape[1])
+
+    def _check_state_space(self, ddfm):
+        msg_if_fail = f"Failed to build state_space properly {self.append_to_msg}"
+        self.assertIsInstance(ddfm.state_space, StateSpace, msg=msg_if_fail)
+        # check shapes
+        self.assertIsInstance(
+            ddfm.state_space.observation_map,
+            keras.Model,
+            msg=msg_if_fail,
+        )
+        self.assertEqual(
+            ddfm.state_space.observation_covariance.shape,
+            (self.sim.n, self.sim.n),
+            msg=msg_if_fail,
+        )
+        np.testing.assert_array_almost_equal(
+            ddfm.state_space.observation_covariance,
+            np.diag(np.diag(ddfm.state_space.observation_covariance)),
+            err_msg=msg_if_fail,
+        )
+        self.assertIsInstance(
+            ddfm.state_space.transition_map,
+            keras.Model,
+            msg=msg_if_fail,
+        )
+        self.assertEqual(
+            ddfm.state_space.transition_covariance.shape,
+            ((self.sim.n + self.sim.r) * 5, (self.sim.n + self.sim.r) * 5),
+            msg=msg_if_fail,
+        )
+        np.testing.assert_array_almost_equal(
+            ddfm.state_space.transition_covariance,
+            np.diag(np.diag(ddfm.state_space.transition_covariance)),
+            err_msg=msg_if_fail,
+        )
+        transition_covariance_zeroed = ddfm.state_space.transition_covariance.copy()
+        transition_covariance_zeroed[: self.sim.r, : self.sim.r] = 0
+        transition_covariance_zeroed[
+            self.sim.r * 5 : self.sim.r * 5 + self.sim.n,
+            self.sim.r * 5 : self.sim.r * 5 + self.sim.n,
+        ] = 0
+        np.testing.assert_array_almost_equal(
+            transition_covariance_zeroed,
+            np.zeros_like(transition_covariance_zeroed),
+            err_msg=msg_if_fail,
+        )
+
+    def _get_model(self, structure_encoder, jointly_est_var=False, seed=123):
+        ddfm = DDFM(
+            structure_encoder=structure_encoder,
+            structure_decoder=self.structure_decoder,
             factor_order=1,
             lags_input=self.lags_input,
             use_bias=False,
