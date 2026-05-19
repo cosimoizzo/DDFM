@@ -3,19 +3,20 @@ from typing import Tuple, Union, Optional, List
 import numpy as np
 import pandas as pd
 from statsmodels.tsa.statespace._quarterly_ar1 import QuarterlyAR1
+import tensorflow as tf
 from tensorflow import keras
 
 from tools.monthly_quarterly_layer import MixedFreqMQLayer
 
 
-def convert_decoder_to_numpy(
+def get_ssm_from_decoder(
     decoder: keras.Model,
     has_bias: bool,
     factor_order: int,
     structure_decoder: tuple = None,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> Tuple[Union[np.ndarray, None], Union[np.ndarray, keras.Model]]:
     """
-    Convert a keras Model decoder to a numpy object, accounting for Mixed frequency layer
+    Convert a keras Model decoder to its state space representation accounting for idiosyncratic components.
     Args:
         decoder: decoder, a keras Model
         has_bias: whether there is a bias term
@@ -23,15 +24,86 @@ def convert_decoder_to_numpy(
         structure_decoder: the structure of the decoder, None for single layer
 
     Returns:
-        bias and weight terms
+        bias and weight terms or keras model
     """
     if structure_decoder is None:
         return _convert_linear_decoder_to_numpy(
             decoder=decoder, has_bias=has_bias, factor_order=factor_order
         )
     else:
-        raise NotImplementedError("Multilayer decoder not available yet!")
+        combined_model = _convert_nnlinear_decoder_to_ssm_representation(decoder, factor_order)
+        return None, combined_model
 
+
+def _convert_nnlinear_decoder_to_ssm_representation(
+        decoder: keras.Model,
+        factor_order: int) -> keras.Model:
+    """
+    Convert a keras Model decoder to its state space representation including idiosyncratic components.
+    Args:
+        decoder: the decoder
+        factor_order: the factor autoregressive order
+
+    Returns:
+        The emission equation as a keras model
+    """
+    last_layer = decoder.get_layer(index=-1)
+    dtype = last_layer.dtype
+    if isinstance(last_layer, MixedFreqMQLayer):
+        # common factors
+        new_decoder = keras.Model(decoder.input, decoder.layers[-2].output)
+        input_part1_dim = new_decoder.input.shape[1]
+        output_dim = new_decoder.output.shape[1]
+        total_dim = 5 * input_part1_dim + 5 * output_dim
+        single_input = keras.Input(shape=(total_dim,), name="all_latent_states", dtype=dtype)
+        inputs_part1 = [single_input[:, i * input_part1_dim : (i + 1) * input_part1_dim] for i in range(5)]
+        output_part1 = keras.layers.Concatenate(dtype=dtype)([new_decoder(ipt) for ipt in inputs_part1])
+        # idio components
+        linear_layer = keras.layers.Dense(output_dim, use_bias=False, trainable=False, dtype=dtype)
+        linear_layer.build((None, output_dim))
+        linear_layer.set_weights([tf.eye(output_dim, dtype=dtype)])
+        inputs_part2 = [single_input[:, 5 * input_part1_dim + i * output_dim: 5 * input_part1_dim + (i+1) * output_dim] for i in range(5)]
+        output_part2 = keras.layers.Concatenate(dtype=dtype)([linear_layer(ipt) for ipt in inputs_part2])
+        # Aggregate across common and idio prediction
+        output_combined = keras.layers.Add(dtype=dtype)([output_part1, output_part2])
+        # Apply mixed frequency restrictions
+        aggreg_layer = keras.layers.Dense(output_dim, use_bias=False, trainable=False, dtype=dtype)
+        aggreg_layer.build((None, output_dim * 5))
+        idio_loadings = np.eye(output_dim)
+        my_matrix = tf.convert_to_tensor(np.vstack(
+                    (
+                        np.kron(
+                            np.array([1, 0, 0, 0, 0]),
+                            idio_loadings[: last_layer.start_quarterly, :],
+                        ),
+                        np.kron(
+                            np.array(last_layer.aggr_restr),
+                            idio_loadings[last_layer.start_quarterly :, :],
+                        ),
+                    )
+                ), dtype=dtype)
+        aggreg_layer.set_weights([tf.transpose(my_matrix)])
+        output = aggreg_layer(output_combined)
+        combined = keras.Model(inputs=single_input, outputs=output)
+    else:
+        input_part1 = decoder.input
+        input_part1_dim = input_part1.shape[1]
+        output_dim = decoder.output.shape[1]
+        total_dim = input_part1_dim * factor_order + output_dim
+        single_input = keras.Input(shape=(total_dim,), name="all_latent_states", dtype=dtype)
+        output_part1 = decoder(single_input[:, :input_part1_dim])
+        # lagged factors plus idio
+        input_part2 = single_input[:, input_part1_dim:]
+        linear_layer = keras.layers.Dense(output_dim, use_bias=False, trainable=False, dtype=dtype)
+        linear_layer.build((None, output_dim + input_part1_dim*(factor_order -1)))
+        my_matrix = tf.concat([tf.zeros((input_part1_dim*(factor_order -1), output_dim), dtype=dtype),
+                              tf.eye(output_dim, dtype=dtype)], axis=0)
+        linear_layer.set_weights([my_matrix])
+        out_part2 = linear_layer(input_part2)
+        # combine them
+        output = keras.layers.Add(dtype=dtype)([out_part2, output_part1])
+        combined = keras.Model(inputs=single_input, outputs=output)
+    return combined
 
 def _convert_linear_decoder_to_numpy(
     decoder: keras.Model,
@@ -62,6 +134,8 @@ def _convert_linear_decoder_to_numpy(
     # state = [f_t, f_t-1, ..., eps_t, eps_t-1, ...]
     ws = ws.T
     if mix_freq_layer is not None:
+        # during learning the bias is learned scaled via the MM layer
+        bs[mix_freq_layer.start_quarterly:] = bs[mix_freq_layer.start_quarterly:] * sum(mix_freq_layer.aggr_restr)
         idio_loadings = np.eye(ws.shape[0])
         ws = np.hstack(
             (
@@ -105,7 +179,6 @@ def _convert_linear_decoder_to_numpy(
             )
     return bs, ws
 
-
 def get_transition_params(
     f_t: np.ndarray,
     eps_t: np.ndarray,
@@ -113,7 +186,9 @@ def get_transition_params(
     bool_no_miss: np.ndarray,
     extended_factor_lags: int = 0,
     quarterly_start: List[int] = None,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    transition_as_keras_model: bool = False,
+    dtype: Optional[tf.DType] = None,
+) -> Tuple[Union[np.ndarray, keras.Model], np.ndarray, np.ndarray]:
     """
     Calculate transition parameters.
     Args:
@@ -124,6 +199,8 @@ def get_transition_params(
         extended_factor_lags: how many factor lags to add in the state representation on top of factor_order (hence,
             total number of lags is factor_order + extended_factor_lags)
         quarterly_start: if flow quarterly idio AR1s are present, specify index start
+        transition_as_keras_model: whether to get the transition function as a keras model
+        dtype: the data type to use for the keras model
 
     Returns:
         autoregressive matrix, diagonal residual covariance matrix, latent states (k x T)
@@ -135,7 +212,8 @@ def get_transition_params(
     p = factor_order
     X_f = np.hstack([f_t[p - j - 1 : T - j, :] for j in range(p)])
     A_f = np.linalg.lstsq(X_f[:-1], f_t[p:, :], rcond=None)[0].T
-    A_eps, _, _ = get_idio(eps_t, bool_no_miss, quarterly_start=quarterly_start)
+    A_eps, std_eps, _ = get_idio(eps_t, bool_no_miss, quarterly_start=quarterly_start)
+    var_eps_res = (1 - np.diag(A_eps) ** 2) * (std_eps ** 2)
     # if extended factor lags is larger than zero, then we add lags also to the idiosyncratic
     # TODO: if we add extended lags only to idio quarterly, then this would need to change
     state_dim = (p + extended_factor_lags) * n_f + n_eps * (
@@ -173,8 +251,20 @@ def get_transition_params(
     else:
         x_t = np.vstack((X_f.T, eps_t[p - 1 :].T))
     # error term matrix
-    w_t = x_t[:, 1:] - A @ x_t[:, :-1]
-    W = np.diag(np.diag(np.cov(w_t)))
+    w_t = x_t[:start_idx_idio, 1:] - A[:start_idx_idio, :start_idx_idio] @ x_t[:start_idx_idio, :-1]
+    W = np.zeros_like(A)
+    W [:start_idx_idio, :start_idx_idio]= np.diag(np.nanvar(w_t, axis=1, ddof=1))
+    # dealing with idiosyncratic
+    W[start_idx_idio:,start_idx_idio:] = 0
+    W[start_idx_idio:start_idx_idio + n_eps, start_idx_idio:start_idx_idio + n_eps] = np.diag(var_eps_res)
+    if transition_as_keras_model:
+        if dtype is None:
+            raise ValueError("transition_as_keras_model requires dtype")
+        inputs = keras.Input(shape=(A.shape[1],), dtype=dtype)
+        linear_layer = keras.layers.Dense(A.shape[0], use_bias=False, trainable=False, dtype=dtype)
+        linear_layer.build((None, A.shape[1]))
+        linear_layer.set_weights([tf.convert_to_tensor(A.T, dtype=dtype)])
+        A = keras.models.Model(inputs=inputs, outputs=linear_layer(inputs))
     return A, W, x_t
 
 
@@ -228,6 +318,8 @@ def get_idio(
                 cond_mean[:, j] = 0
 
     for j in range(end_nn_quarterly, eps.shape[1]):
+        tmp_eps = eps[:, j]
+        tmp_eps[~idx_no_missings[:,j]] = np.nan
         mod_idio_qmm = QuarterlyAR1(eps[:, j])
         res_idio_qmm = mod_idio_qmm.fit(maxiter=50, return_params=True, disp=False)
         res_idio_qmm = mod_idio_qmm.fit_em(res_idio_qmm, maxiter=50, return_params=True)

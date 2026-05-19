@@ -11,7 +11,7 @@ from models.state_space.state_space_wrapper import StateSpace, FilterType
 from models.vector_autoregressive import VARLayerClosedForm, VARAutoencoder
 from tools.loss_tools import mse_missing, np_mse_missing
 from tools.getters_converters_tools import (
-    convert_decoder_to_numpy,
+    get_ssm_from_decoder,
     get_transition_params,
     get_idio,
     get_data_with_lags,
@@ -134,7 +134,7 @@ class DDFM:
     def fit(
         self,
         data: pd.DataFrame,
-        build_state_space: bool = False,
+        build_state_space: bool = True,
         vars_mq_restrictions: List[Any] = None,
     ) -> None:
         """
@@ -160,10 +160,10 @@ class DDFM:
             self.state_space = self.build_state_space()
             # get filtered factors
             self._latents["filtered"], self._latents["sigma_filtered"] = (
-                self.state_space.filter(self.data.values)
+                self.state_space.filter(data.values)
             )
             self._latents["smoothed"], self._latents["sigma_smoothed"] = (
-                self.state_space.smooth(self.data.values)
+                self.state_space.smooth(data.values)
             )
             self.factors_filtered = self._latents["filtered"][
                 :, : self.structure_encoder[-1]
@@ -222,11 +222,10 @@ class DDFM:
         Returns:
             The state space object
         """
-        # TODO: need to extend to unscented kalman filter and pass the types.
         # extract common factors
         f_t = np.mean(self.factors_ae, axis=0)
         # get params from decoder (measurement equation)
-        bs, H = convert_decoder_to_numpy(
+        bs, H = get_ssm_from_decoder(
             self.decoder,
             self.use_bias,
             self.factor_order,
@@ -249,9 +248,11 @@ class DDFM:
                 else 0
             ),
             quarterly_start=self.quarterly_start,
+            transition_as_keras_model=self._filter_type == FilterType.UnscentedKalmanFilter,
+            dtype=self.dtype,
         )
         self._latents["ae_states"] = x_t
-        R = np.eye(self.idio_residuals.shape[1]) * 1e-15
+        R = np.eye(self.idio_residuals.shape[1]) * 1e-5 if self.dtype == tf.float32 else np.eye(self.idio_residuals.shape[1]) * 1e-10
         measurement = {
             "observation_map": H,
             "observation_covariance": R,
@@ -264,8 +265,8 @@ class DDFM:
             mean_y=self.mean_data,
             sigma_y=self.sigma_data,
             filter_type=self._filter_type,
-            x0=x_t[:, 0],
-            P0=np.eye(x_t.shape[0]),
+            x0=np.nan_to_num(x_t[:, 0]),
+            P0=np.diag(np.nanvar(x_t, axis=1)),
             dtype=self.dtype,
         )
 
@@ -347,7 +348,7 @@ class DDFM:
 
         self.encoder = keras.Model(inputs, encoded)
         # decoder
-        latent_inputs = keras.Input(shape=(self.structure_encoder[-1],))
+        latent_inputs = keras.Input(shape=(self.structure_encoder[-1],), dtype=self.dtype)
         if self.structure_decoder:
             decoded = layers.Dense(
                 self.structure_decoder[0],
