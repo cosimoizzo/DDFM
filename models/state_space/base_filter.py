@@ -18,14 +18,14 @@ class BaseFilter(ABC):
         """
         pass
 
-    # @abstractmethod
+    @abstractmethod
     def _get_filter_function(self):
         """
         Get filter function.
         """
         pass
 
-    # @abstractmethod
+    @abstractmethod
     def _get_smoother_function(self):
         """
         Get smoother function.
