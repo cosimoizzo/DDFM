@@ -25,7 +25,7 @@ class AdditiveUKF(BaseFilter):
         observation_covariance: Union[tf.Tensor, np.ndarray],
         x0: Union[tf.Tensor, np.ndarray],
         P0: Union[tf.Tensor, np.ndarray],
-        alpha: Optional[float] = 0.5,
+        alpha: Optional[float] = None,
         kappa: Optional[float] = 0.0,
         beta: Optional[float] = 2.0,
         dtype: Optional[tf.DType] = tf.float64,
@@ -75,6 +75,10 @@ class AdditiveUKF(BaseFilter):
             else P0
         )
         state_size = self.transition_covariance.shape[-1]
+        if alpha is None:
+            # target wm[0]: small positive, decreasing with n is fine
+            t = 1.0 / (state_size + 1)
+            alpha = 1.0 / tf.sqrt(1.0 - t)
         self.alpha = tf.cast(alpha, dtype=dtype)
         self.kappa = tf.cast(kappa, dtype=dtype)
         self.beta = tf.cast(beta, dtype=dtype)
@@ -92,7 +96,7 @@ class AdditiveUKF(BaseFilter):
     def _compute_weights(self):
         denom = self.L + self.lamb
 
-        num_sigma = 2 * self.L + 1
+        num_sigma = 2 * self.state_size + 1
         wm = tf.fill([num_sigma], 1.0 / (2.0 * denom))
         wc = tf.fill([num_sigma], 1.0 / (2.0 * denom))
 
@@ -117,6 +121,7 @@ class AdditiveUKF(BaseFilter):
         x = tf.reduce_sum(self.wm[:, tf.newaxis] * sigmas_points, axis=0)
         diff = sigmas_points - x[tf.newaxis, :]
         P = tf.einsum("i,ij,ik->jk", self.wc, diff, diff) + noise_cov
+        P = 0.5 * (P + tf.transpose(P))
         return x, P
 
     @tf.function
@@ -167,11 +172,11 @@ class AdditiveUKF(BaseFilter):
         dx = sigmas_f - x_pred[tf.newaxis, :]
         dz = sigmas_obs - y_pred[tf.newaxis, :]
         Pxz = tf.einsum("i,ij,ik->jk", self.wc, dx, dz)
-        K = tf.linalg.solve(tf.transpose(S), tf.transpose(Pxz))
-        K = tf.transpose(K)
+        K = tf.transpose(tf.linalg.solve(S, tf.transpose(Pxz)))
 
         x_upd = x_pred + tf.linalg.matvec(K, keras.ops.nan_to_num(y, nan=0.0) - y_pred)
         P_upd = P_pred - K @ S @ tf.transpose(K)
+        P_upd = 0.5 * (P_upd + tf.transpose(P_upd))
 
         return x_upd, P_upd
 
@@ -200,6 +205,8 @@ class AdditiveUKF(BaseFilter):
 
             x_smooth = x_f + tf.linalg.matvec(G, x_s_next - x_p)
             P_smooth = P_f + G @ (P_s_next - P_p) @ tf.transpose(G)
+
+            P_smooth = 0.5 * (P_smooth + tf.transpose(P_smooth))
 
             return x_smooth, P_smooth
 
@@ -239,7 +246,7 @@ class AdditiveUKF(BaseFilter):
                 )
                 return x_pred, P_pred, y_pred, S
 
-            dummy = tf.zeros([steps_ahead], dtype=self.dtype)  # (n_steps,)
+            dummy = tf.zeros([steps_ahead], dtype=self.dtype)
             _, _, y_preds, S_preds = tf.scan(
                 fn=scan_fn,
                 elems=dummy,

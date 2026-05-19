@@ -109,6 +109,7 @@ class KalmanFilter(BaseFilter):
             self.transition_map @ P @ tf.transpose(self.transition_map)
             + self.transition_covariance
         )
+        P_pred = 0.5 * (P_pred + tf.transpose(P_pred))
         return x_pred, P_pred
 
     @tf.function
@@ -154,6 +155,7 @@ class KalmanFilter(BaseFilter):
         P_upd = I_KH @ P_pred @ tf.transpose(
             I_KH
         ) + K @ self.observation_covariance @ tf.transpose(K)
+        P_upd = 0.5 * (P_upd + tf.transpose(P_upd))
         return x_upd, P_upd
 
     def _get_filter_function(self):
@@ -175,7 +177,7 @@ class KalmanFilter(BaseFilter):
 
             x_smooth = x_f + tf.linalg.matvec(G, x_s_next - x_p)
             P_smooth = P_f + G @ (P_s_next - P_p) @ tf.transpose(G)
-
+            P_smooth = 0.5 * (P_smooth + tf.transpose(P_smooth))
             return x_smooth, P_smooth
 
         return scan_fn
