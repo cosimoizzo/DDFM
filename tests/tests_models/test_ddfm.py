@@ -60,7 +60,9 @@ class TestDDFM(unittest.TestCase):
         last_neurons = np.mean(ddfm.last_neurons, axis=0)
         r2 = self.sim.evaluate(last_neurons, f_true=self.sim.f[self.lags_input :])
         self.assertGreaterEqual(
-            r2, 0.8, msg=f"r2 should be true and fitted states should be greater than 0.8{self.append_to_msg}"
+            r2,
+            0.8,
+            msg=f"r2 should be true and fitted states should be greater than 0.8{self.append_to_msg}",
         )
         predict_from_auto = ddfm.autoencoder(ddfm._data_tmp)
         predict_from_encode_decode = ddfm.decoder(ddfm.encoder(ddfm._data_tmp))
@@ -130,10 +132,12 @@ class TestDDFM(unittest.TestCase):
         # r2 between ssm and encoded factors
         factors_mean = np.mean(ddfm.last_neurons, axis=0)
         # TODO: replace with a get factors method?
-        ssm_factors = ddfm.state_space.smooth(self.x)[0][:,:factors_mean.shape[0]]
+        ssm_factors = ddfm.state_space.smooth(self.x)[0][:, : factors_mean.shape[0]]
         r2 = self.sim.evaluate(ssm_factors, f_true=factors_mean)
         self.assertGreaterEqual(
-            r2, 0.8, msg=f"r2 between ssm and encoded should be greater than 0.8{self.append_to_msg}"
+            r2,
+            0.8,
+            msg=f"r2 between ssm and encoded should be greater than 0.8{self.append_to_msg}",
         )
 
     def _single_test_predict(self, ddfm):

@@ -16,10 +16,10 @@ from tools.monthly_quarterly_layer import MixedFreqMQLayer
 
 
 def build_keras_model(
-        input_dim=4,
-        output_dim=10,
-        use_bias=True,
-        use_mixed_freq=False,
+    input_dim=4,
+    output_dim=10,
+    use_bias=True,
+    use_mixed_freq=False,
 ):
     input = layers.Input(shape=(input_dim,))
     output = layers.Dense(output_dim, use_bias=use_bias)(input)
@@ -130,16 +130,20 @@ class TestGettersAndConvertersTools(unittest.TestCase):
                         has_bias=use_bias,
                         factor_order=factor_order,
                     )
-                    bs_with_structure_encoder, ws_with_structure_encoder = get_ssm_from_decoder(
-                        decoder=model,
-                        has_bias=use_bias,
-                        factor_order=factor_order,
-                        structure_decoder=(10,)
+                    bs_with_structure_encoder, ws_with_structure_encoder = (
+                        get_ssm_from_decoder(
+                            decoder=model,
+                            has_bias=use_bias,
+                            factor_order=factor_order,
+                            structure_decoder=(10,),
+                        )
                     )
                     input_test = self.rng.random(size=(25, ws.shape[1]))
                     self.assertIsNone(bs_with_structure_encoder)
                     output = ws_with_structure_encoder(input_test)
-                    np.testing.assert_allclose(output.numpy(), input_test @ ws.T + bs[None, :], rtol=1e-5)
+                    np.testing.assert_allclose(
+                        output.numpy(), input_test @ ws.T + bs[None, :], rtol=1e-5
+                    )
 
     def test_get_transition_params(self):
         np.random.seed(0)

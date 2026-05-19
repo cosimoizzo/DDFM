@@ -248,11 +248,16 @@ class DDFM:
                 else 0
             ),
             quarterly_start=self.quarterly_start,
-            transition_as_keras_model=self._filter_type == FilterType.UnscentedKalmanFilter,
+            transition_as_keras_model=self._filter_type
+            == FilterType.UnscentedKalmanFilter,
             dtype=self.dtype,
         )
         self._latents["ae_states"] = x_t
-        R = np.eye(self.idio_residuals.shape[1]) * 1e-5 if self.dtype == tf.float32 else np.eye(self.idio_residuals.shape[1]) * 1e-10
+        R = (
+            np.eye(self.idio_residuals.shape[1]) * 1e-5
+            if self.dtype == tf.float32
+            else np.eye(self.idio_residuals.shape[1]) * 1e-10
+        )
         measurement = {
             "observation_map": H,
             "observation_covariance": R,
@@ -348,7 +353,9 @@ class DDFM:
 
         self.encoder = keras.Model(inputs, encoded)
         # decoder
-        latent_inputs = keras.Input(shape=(self.structure_encoder[-1],), dtype=self.dtype)
+        latent_inputs = keras.Input(
+            shape=(self.structure_encoder[-1],), dtype=self.dtype
+        )
         if self.structure_decoder:
             decoded = layers.Dense(
                 self.structure_decoder[0],
