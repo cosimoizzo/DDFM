@@ -212,6 +212,30 @@ class AdditiveUKF(BaseFilter):
 
         return scan_fn
 
+    def _get_smoother_with_cross_cov(self):
+        def scan_fn(carry, elems):
+            x_s_next, P_s_next, _ = carry
+            x_f, P_f, x_p, P_p = elems
+
+            sigmas_t = self._sigma_points(x_f, P_f)
+            sigmas_ft = self.transition_map(sigmas_t)
+            dx = sigmas_t - x_f[tf.newaxis, :]
+            dxp = sigmas_ft - x_p[tf.newaxis, :]
+            Pxy = tf.einsum("i,ij,ik->jk", self.wc, dx, dxp)
+
+            G = tf.transpose(
+                tf.linalg.solve(tf.transpose(P_p), tf.transpose(Pxy))
+            )
+
+            x_smooth = x_f + tf.linalg.matvec(G, x_s_next - x_p)
+            P_smooth = P_f + G @ (P_s_next - P_p) @ tf.transpose(G)
+            P_smooth = 0.5 * (P_smooth + tf.transpose(P_smooth))
+            P_cross = G @ P_s_next
+
+            return (x_smooth, P_smooth, P_cross)
+
+        return scan_fn
+
     def predict_from_state(
         self,
         predicted_state_mean: np.ndarray,

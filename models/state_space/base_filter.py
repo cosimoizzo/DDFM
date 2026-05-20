@@ -32,6 +32,12 @@ class BaseFilter(ABC):
         """
         pass
 
+    def _get_smoother_with_cross_cov(self):
+        """
+        Get smoother function with cross-covariance.
+        """
+        pass
+
     def get_default_initial_state(self) -> Tuple[tf.Tensor, tf.Tensor]:
         return self.x0, self.P0
 
@@ -134,3 +140,49 @@ class BaseFilter(ABC):
         # xs_smooth: (T, dim_x)
         # Ps_smooth: (T, dim_x, dim_x)
         return xs_smooth.numpy(), Ps_smooth.numpy()
+
+    def smooth_with_cross_cov(
+        self,
+        y: np.ndarray,
+        x0: Optional[np.ndarray] = None,
+        P0: Optional[np.ndarray] = None,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Apply Unscented Kalman Smoother
+        Args:
+            y: observable variables
+            x0: initial state mean (optional, if not provided default starting state is used), this is used as the
+                predicted state for the first observation in y.
+            P0: initial state covariance (optional, if not provided default starting covariance is used)
+
+        Returns:
+            xs_smooth: smoothed states mean
+            Ps_smooth: smoothed states covariance
+            Ps_cross: np.ndarray (T-1, state_size, state_size)
+                Ps_cross[t] = Cov(x_t, x_{t+1} | y_{1:T})
+        """
+        x = self.x0 if x0 is None else x0
+        P = self.P0 if P0 is None else P0
+
+        y_tf = tf.convert_to_tensor(y, dtype=self.dtype)
+
+        xs_pred, Ps_pred, xs_filt, Ps_filt = tf.scan(
+            fn=self._get_filter_function(),
+            elems=y_tf,
+            initializer=(x, P, x, P),
+        )
+
+        dummy_cross = tf.zeros_like(Ps_filt[0])
+
+        elems = (xs_filt[:-1], Ps_filt[:-1], xs_pred[:-1], Ps_pred[:-1])
+        xs_smooth_vals, Ps_smooth_vals, Ps_cross_vals = tf.scan(
+            fn=self._get_smoother_with_cross_cov(),
+            elems=elems,
+            initializer=(xs_filt[-1], Ps_filt[-1], dummy_cross),
+            reverse=True,
+        )
+
+        xs_smooth = tf.concat([xs_smooth_vals, xs_filt[-1:]], axis=0)
+        Ps_smooth = tf.concat([Ps_smooth_vals, Ps_filt[-1:]], axis=0)
+
+        return xs_smooth.numpy(), Ps_smooth.numpy(), Ps_cross_vals.numpy()
