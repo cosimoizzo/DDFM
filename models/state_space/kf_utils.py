@@ -182,6 +182,17 @@ class KalmanFilter(BaseFilter):
 
         return scan_fn
 
+    def _get_fillna_from_state_function(self):
+        use_tf_map = False
+        def map_fn(state_mean, state_covariance):
+            y_pred = (
+                    tf.linalg.matvec(self.observation_map, state_mean)
+                    + self.observation_offsets
+            )
+            S_pred = tf.einsum('ab,tbc,dc->tad', self.observation_map, state_covariance, self.observation_map)
+            return y_pred, S_pred
+        return map_fn, use_tf_map
+
     def predict_from_state(
         self,
         predicted_state_mean: np.ndarray,

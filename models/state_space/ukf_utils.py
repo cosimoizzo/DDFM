@@ -190,6 +190,18 @@ class AdditiveUKF(BaseFilter):
 
         return scan_fn
 
+    def _get_fillna_from_state_function(self):
+        use_tf_map = True
+        def map_fn(elem):
+            state_mean, state_covariance = elem
+            sigmas_f = self._sigma_points(state_mean, state_covariance)
+            sigmas_obs = self.observation_map(sigmas_f)
+            y_pred, S_pred = self._unscented_transform(
+                sigmas_obs, self.observation_covariance
+            )
+            return y_pred, S_pred
+        return map_fn, use_tf_map
+
     def _get_smoother_function(self):
         def scan_fn(carry, elems):
             x_s_next, P_s_next = carry

@@ -165,7 +165,7 @@ class TestAdditiveUKF(TestBase):
             dtype=TF_DTYPE,
         )
         hat_x = ukf.smooth(y_t)[0]
-        preds_y = ukf.fill_na(y_t)[0]
+        preds_y = ukf.fill_na(y_t)[0][-1]
         preds_manual_y = np.dot(self.H, hat_x[-1, :])
         np.testing.assert_allclose(preds_y, preds_manual_y, rtol=1e-5)
 

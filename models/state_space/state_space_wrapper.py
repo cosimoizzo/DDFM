@@ -186,6 +186,19 @@ class StateSpace:
         smoothed_state_means, smoothed_state_covariances = self.ssm_repr.smooth(y_cpy)
         return smoothed_state_means, smoothed_state_covariances
 
+    def fill_na(self, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        State Space based inferred observable distribution
+        Args:
+            y: observable realised values
+
+        Returns:
+            y and its covariance with filled values implied by the kalman smoother
+        """
+        y_cpy = self._scale_data(y)
+        y_mean, y_cov = self.ssm_repr.fill_na(y_cpy)
+        return self._undo_scale_data(y_mean, y_cov)
+
     def _undo_scale_data(
         self, mean: np.ndarray, cov: np.ndarray, round_to: int = 10
     ) -> Tuple[np.ndarray, np.ndarray]:

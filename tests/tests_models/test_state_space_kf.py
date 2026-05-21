@@ -135,7 +135,7 @@ class TestKalmanFilter(TestBase):
             P0=np.eye(self.d),
         )
         hat_x = kalman_filter_tf.smooth(y_t)[0]
-        preds_y = kalman_filter_tf.fill_na(y_t)[0]
+        preds_y = kalman_filter_tf.fill_na(y_t)[0][-1]
         preds_manual_y = np.dot(self.H, hat_x[-1, :])
         np.testing.assert_allclose(preds_y, preds_manual_y, rtol=1e-5)
 

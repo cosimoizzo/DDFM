@@ -32,6 +32,13 @@ class BaseFilter(ABC):
         """
         pass
 
+    @abstractmethod
+    def _get_fillna_from_state_function(self):
+        """
+        Get function to fill missing values in the observable space from .
+        """
+        pass
+
     def _get_smoother_with_cross_cov(self):
         """
         Get smoother function with cross-covariance.
@@ -51,13 +58,6 @@ class BaseFilter(ABC):
         return self.predict_from_state(
             predicted_state_mean, predicted_state_covariance, steps_ahead
         )
-
-    def fill_na(self, y: np.ndarray):
-        """
-        Fill missing values in the observables
-        """
-        mean, cov = self.predict(y, steps_ahead=0)
-        return mean[0, ...], cov[0, ...]
 
     def filter(
         self,
@@ -186,3 +186,43 @@ class BaseFilter(ABC):
         Ps_smooth = tf.concat([Ps_smooth_vals, Ps_filt[-1:]], axis=0)
 
         return xs_smooth.numpy(), Ps_smooth.numpy(), Ps_cross_vals.numpy()
+
+    def fill_na(self,
+                y: np.ndarray,
+                x0: Optional[np.ndarray] = None,
+                P0: Optional[np.ndarray] = None,
+                keep_non_missing: bool = False
+                ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Fill missing values in the observables
+        Args:
+            y: observable variables
+            x0: initial state mean (optional, if not provided default starting state is used), this is used as the
+                predicted state for the first observation in y.
+            P0: initial state covariance (optional, if not provided default starting covariance is used)
+            keep_non_missing: whether to keep non-missing values in the mean vector equal to the realized values
+
+        Returns:
+            y_mean: smoothed sates implied observable mean
+            y_cov: smoothed states implied observable covariance
+        """
+        states_mean, states_cov = self.smooth(y, x0=x0, P0=P0)
+        obs_size = y.shape[1]
+        f, use_tf_map = self._get_fillna_from_state_function()
+        if use_tf_map:
+            y_mean, y_cov = tf.map_fn(
+                fn=f,
+                elems=(states_mean, states_cov),
+                fn_output_signature=(
+                    tf.TensorSpec((obs_size,), self.dtype),
+                    tf.TensorSpec((obs_size, obs_size), self.dtype),
+                )
+            )
+        else:
+            y_mean, y_cov = f(states_mean, states_cov)
+        y_mean = y_mean.numpy()
+        y_cov = y_cov.numpy()
+        if keep_non_missing:
+            not_nan = ~np.isnan(y)
+            y_mean[not_nan] = y[not_nan]
+        return y_mean, y_cov
