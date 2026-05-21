@@ -54,26 +54,12 @@ class AdditiveUKF(BaseFilter):
         self.transition_map = transition_map
         self.observation_map = observation_map
         self.dtype = dtype
-        self.transition_covariance = (
-            tf.convert_to_tensor(transition_covariance, dtype=dtype)
-            if not isinstance(transition_covariance, tf.Tensor)
-            else transition_covariance
-        )
-        self.observation_covariance = (
-            tf.convert_to_tensor(observation_covariance, dtype=dtype)
-            if not isinstance(observation_covariance, tf.Tensor)
-            else observation_covariance
-        )
-        self.x0 = (
-            tf.convert_to_tensor(x0, dtype=dtype)
-            if not isinstance(x0, tf.Tensor)
-            else x0
-        )
-        self.P0 = (
-            tf.convert_to_tensor(P0, dtype=dtype)
-            if not isinstance(P0, tf.Tensor)
-            else P0
-        )
+        def _convert_to_tensor(matrix):
+            return tf.convert_to_tensor(matrix, dtype=dtype) if not isinstance(matrix, tf.Tensor) else matrix
+        self.transition_covariance = _convert_to_tensor(transition_covariance)
+        self.observation_covariance = _convert_to_tensor(observation_covariance)
+        self.x0 = _convert_to_tensor(x0)
+        self.P0 = _convert_to_tensor(P0)
         state_size = self.transition_covariance.shape[-1]
         if alpha is None:
             # target wm[0]: small positive, decreasing with n is fine

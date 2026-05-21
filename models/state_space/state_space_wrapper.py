@@ -44,6 +44,10 @@ class StateSpace:
         super().__init__()
         self.mean_y = mean_y
         self.sigma_y = sigma_y
+        if x0 is not None and np.sum(np.isnan(x0)):
+            raise ValueError("x0 cannot contain missing values.")
+        if P0 is not None and np.sum(np.isnan(P0)):
+            raise ValueError("P0 cannot contain missing values.")
         self.x0 = x0
         self.P0 = P0
         # init parameters of the state space to None
