@@ -7,6 +7,7 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
 
+from models.base import FactorModel
 from models.state_space.state_space_wrapper import StateSpace, FilterType
 from models.vector_autoregressive import VARLayerClosedForm, VARAutoencoder
 from tools.loss_tools import mse_missing, np_mse_missing
@@ -15,13 +16,17 @@ from tools.getters_converters_tools import (
     get_transition_params,
     get_idio,
     get_data_with_lags,
+    _get_idio_matrix,
 )
 from tools.monthly_quarterly_layer import MixedFreqMQLayer
 
 # tf.config.run_functions_eagerly(True)
 
+# Using Marginalized UKF instead of UKF (speed up and efficiency gain)
+_USE_M_UKF = True
 
-class DDFM:
+
+class DDFM(FactorModel):
     """
     Deep Dynamic Factor Models
     """
@@ -77,6 +82,7 @@ class DDFM:
             dtype:
 
         """
+        super().__init__(r=structure_encoder[-1])
         # common factors
         self.factor_order = factor_order
         if factor_order not in [1, 2]:
@@ -92,7 +98,7 @@ class DDFM:
         if self.structure_decoder is None:
             self._filter_type = FilterType.KalmanFilter
         else:
-            self._filter_type = FilterType.UnscentedKalmanFilter
+            self._filter_type = FilterType.Marginalized_UKF if _USE_M_UKF else FilterType.UnscentedKalmanFilter
         # seed setting
         self.seed = seed
         self.rng = np.random.RandomState(seed)
@@ -117,8 +123,6 @@ class DDFM:
         self._optimizer = None
         self.data = None
         self.variable_order = None
-        self.mean_data = None
-        self.sigma_data = None
         self.loss_now = None
         self.autoencoder = None
         self.encoder = None
@@ -172,17 +176,15 @@ class DDFM:
                 :, : self.structure_encoder[-1]
             ]
 
-    def predict(
+    def predict_with_covariance(
         self, data: pd.DataFrame, steps_ahead: int = 1
     ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
-        Prediction step using state-space representation
-        Args:
-            data: observable data
-            steps_ahead: number of steps ahead
+        Prediction step using state-space representation.
 
         Returns:
-            mean predictions and covariances
+            (mean DataFrame of shape (steps_ahead+1, N),
+             covariance DataFrame with MultiIndex)
         """
         if self.state_space is None:
             raise ValueError("State space must be built before making inference")
@@ -190,6 +192,42 @@ class DDFM:
             data[self.variable_order].sort_index().values, steps_ahead=steps_ahead
         )
         return self._numpy_to_df_mean_and_cov(mean, cov, steps_ahead)
+
+    def predict(self, data: pd.DataFrame, steps_ahead: int = 1) -> pd.DataFrame:
+        """
+        Forecast observables at horizons h=0..steps_ahead.
+        Row 0 is the reconstruction at the last observed point (h=0).
+        Rows 1..steps_ahead are h-step-ahead forecasts.
+        Output is in the original (un-standardised) scale.
+        """
+        mean_df, _ = self.predict_with_covariance(data, steps_ahead)
+        return mean_df
+
+    def get_factors(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Return Kalman-smoothed latent factors using the fitted state space.
+
+        Returns pd.DataFrame of shape (T, r) with columns ["f1", ..., "fr"].
+        The factors live in their own latent space and are NOT un-standardised.
+        """
+        if self.state_space is None:
+            raise ValueError("State space must be built before calling get_factors.")
+        x = data[self.variable_order].sort_index().values
+        smoothed, _ = self.state_space.smooth(x)
+        f_hat = smoothed[:, : self.r]
+        cols = [f"f{i + 1}" for i in range(self.r)]
+        return pd.DataFrame(f_hat, index=data.sort_index().index, columns=cols)
+
+    def fill_na(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Fill missing values using kalman smoother.
+        """
+        if self.state_space is None:
+            raise ValueError("State space must be built before calling get_factors.")
+        x = data[self.variable_order].values.astype(float)
+        x_filled, x_cov = self.state_space.fill_na(x)
+        df = pd.DataFrame(x_filled, index=data.index, columns=self.variable_order)
+        return df[data.columns]
 
     def predict_from_states(
         self,
@@ -263,6 +301,8 @@ class DDFM:
             "observation_covariance": R,
             "observation_offsets": bs,
         }
+        if self._filter_type == FilterType.Marginalized_UKF:
+            measurement["linear_observation_map"] = _get_idio_matrix(self.data.shape[1], self.decoder.get_layer(index=-1))
         transition = {"transition_map": F, "transition_covariance": Q}
         return StateSpace(
             transition,
@@ -270,7 +310,7 @@ class DDFM:
             mean_y=self.mean_data,
             sigma_y=self.sigma_data,
             filter_type=self._filter_type,
-            x0=np.nan_to_num(x_t[:, 0]),
+            x0=np.nanmean(x_t, axis=1),
             P0=np.diag(np.nanvar(x_t, axis=1)),
             dtype=self.dtype,
         )
