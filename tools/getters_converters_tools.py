@@ -176,7 +176,6 @@ def _convert_linear_decoder_to_numpy(
         bs[mix_freq_layer.start_quarterly :] = bs[
             mix_freq_layer.start_quarterly :
         ] * sum(mix_freq_layer.aggr_restr)
-        idio_loadings = np.eye(ws.shape[0])
         ws = np.hstack(
             (
                 np.vstack(
@@ -191,33 +190,41 @@ def _convert_linear_decoder_to_numpy(
                         ),
                     )
                 ),
-                # TODO: consider adding lags only for idio of quarterly variables
-                np.vstack(
-                    (
-                        np.kron(
-                            np.array([1, 0, 0, 0, 0]),
-                            idio_loadings[: mix_freq_layer.start_quarterly, :],
-                        ),
-                        np.kron(
-                            np.array(mix_freq_layer.aggr_restr),
-                            idio_loadings[mix_freq_layer.start_quarterly :, :],
-                        ),
-                    )
-                ),
+                _get_idio_matrix(ws.shape[0], mix_freq_layer),
             )
         )
     else:
         if factor_order == 1:
-            ws = np.hstack((ws, np.eye(ws.shape[0])))  # weight term  # idio
+            ws = np.hstack((ws, _get_idio_matrix(ws.shape[0])))  # weight term  # idio
         else:
             ws = np.hstack(
                 (
                     np.kron(np.array([1] + [0] * (factor_order - 1)), ws),
                     # only one lag for the idio
-                    np.eye(ws.shape[0]),
+                    _get_idio_matrix(ws.shape[0]),
                 )
             )
     return bs, ws
+
+def _get_idio_matrix(n_vars: int, mix_freq_layer: Optional[MixedFreqMQLayer] = None) -> np.ndarray:
+    if mix_freq_layer is not None:
+        # TODO: consider adding lags only for idio of quarterly variables
+        idio_loadings = np.eye(n_vars)
+        idio_matrix = np.vstack(
+            (
+                np.kron(
+                    np.array([1, 0, 0, 0, 0]),
+                    idio_loadings[: mix_freq_layer.start_quarterly, :],
+                ),
+                np.kron(
+                    np.array(mix_freq_layer.aggr_restr),
+                    idio_loadings[mix_freq_layer.start_quarterly:, :],
+                ),
+            )
+        )
+    else:
+        idio_matrix = np.eye(n_vars)
+    return idio_matrix
 
 
 def get_transition_params(
