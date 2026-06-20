@@ -4,7 +4,8 @@ import keras
 import numpy as np
 import pandas as pd
 
-from models.ddfm import DDFM
+from models.base import FactorModel
+from models.ddfm import DDFM, _USE_M_UKF
 from models.state_space.state_space_wrapper import StateSpace
 from synthetic_dgp.simulate import SIMULATE, QuarterlyVars, AggregationInstr
 
@@ -141,11 +142,33 @@ class TestDDFM(unittest.TestCase):
         )
 
     def _single_test_predict(self, ddfm):
-        mean, covs = ddfm.predict(pd.DataFrame(self.x), steps_ahead=2)
+        # FactorModel interface: predict returns a single DataFrame
+        self.assertIsInstance(ddfm, FactorModel)
+        pred_df = ddfm.predict(pd.DataFrame(self.x), steps_ahead=2)
+        self.assertIsInstance(pred_df, pd.DataFrame)
+        self.assertEqual(pred_df.shape[0], 3)
+        self.assertEqual(pred_df.shape[1], self.x.shape[1])
+
+        # predict_with_covariance returns (mean, cov) tuple
+        mean, covs = ddfm.predict_with_covariance(pd.DataFrame(self.x), steps_ahead=2)
         self.assertEqual(mean.shape[0], 3)
         self.assertEqual(mean.shape[1], self.x.shape[1])
         self.assertEqual(covs.shape[0], 3 * self.x.shape[1])
         self.assertEqual(covs.shape[1], self.x.shape[1])
+
+        # get_factors returns (T, r) DataFrame
+        factors = ddfm.get_factors(pd.DataFrame(self.x))
+        self.assertIsInstance(factors, pd.DataFrame)
+        self.assertEqual(factors.shape[1], self.structure_encoder[-1])
+        self.assertEqual(factors.shape[0], self.x.shape[0])
+
+        # fill_na returns (T, N) DataFrame in original scale
+        if ddfm.lags_input == 0:
+            x_miss = self.x.copy()
+            x_miss[0, 0] = np.nan
+            filled = ddfm.fill_na(pd.DataFrame(x_miss))
+            self.assertIsInstance(filled, pd.DataFrame)
+            self.assertFalse(filled.isnull().any().any())
 
 
 class TestDDFMMonthlyQuarterly(TestDDFM):
@@ -307,11 +330,32 @@ class TestDDFMMonthlyQuarterlyNonLinDec(TestDDFM):
             np.diag(np.diag(ddfm.state_space.observation_covariance)),
             err_msg=msg_if_fail,
         )
-        self.assertIsInstance(
-            ddfm.state_space.transition_map,
-            keras.Model,
-            msg=msg_if_fail,
-        )
+        if _USE_M_UKF:
+            self.assertEqual(
+                ddfm.state_space.transition_map.shape,
+                ((self.sim.n + self.sim.r) * 5, (self.sim.n + self.sim.r) * 5),
+                msg=msg_if_fail,
+            )
+            np.testing.assert_array_almost_equal(
+                ddfm.state_space.transition_map[
+                    self.sim.r: self.sim.r * 5, : self.sim.r * 5
+                ],
+                np.eye(self.sim.r * 4, self.sim.r * 5),
+                err_msg=msg_if_fail,
+            )
+            np.testing.assert_array_almost_equal(
+                ddfm.state_space.transition_map[
+                    self.sim.r * 5 + self.sim.n:, self.sim.r * 5:
+                ],
+                np.eye(self.sim.n * 4, self.sim.n * 5),
+                err_msg=msg_if_fail,
+            )
+        else:
+            self.assertIsInstance(
+                ddfm.state_space.transition_map,
+                keras.Model,
+                msg=msg_if_fail,
+            )
         self.assertEqual(
             ddfm.state_space.transition_covariance.shape,
             ((self.sim.n + self.sim.r) * 5, (self.sim.n + self.sim.r) * 5),
