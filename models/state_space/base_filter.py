@@ -4,6 +4,8 @@ from typing import Tuple, Optional
 import tensorflow as tf
 import numpy as np
 
+def _convert_to_tensor(matrix, dtype):
+    return tf.convert_to_tensor(matrix, dtype=dtype) if not isinstance(matrix, tf.Tensor) else matrix
 
 class BaseFilter(ABC):
     @abstractmethod

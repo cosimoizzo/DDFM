@@ -4,7 +4,22 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 
-from models.state_space.base_filter import BaseFilter
+from models.state_space.base_filter import BaseFilter, _convert_to_tensor
+
+
+def _get_linear_smoother_function(transition_map: tf.Tensor):
+    def scan_fn(carry, elems):
+        x_s_next, P_s_next = carry
+        x_f, P_f, x_p, P_p = elems
+
+        Pxy = P_f @ tf.transpose(transition_map)
+        G = tf.transpose(tf.linalg.solve(tf.transpose(P_p), tf.transpose(Pxy)))
+
+        x_smooth = x_f + tf.linalg.matvec(G, x_s_next - x_p)
+        P_smooth = P_f + G @ (P_s_next - P_p) @ tf.transpose(G)
+        P_smooth = 0.5 * (P_smooth + tf.transpose(P_smooth))
+        return x_smooth, P_smooth
+    return scan_fn
 
 
 class KalmanFilter(BaseFilter):
@@ -39,56 +54,24 @@ class KalmanFilter(BaseFilter):
 
         """
         self.dtype = dtype
-        self.transition_map = (
-            tf.convert_to_tensor(transition_map, dtype=dtype)
-            if not isinstance(transition_map, tf.Tensor)
-            else transition_map
-        )
-        self.observation_map = (
-            tf.convert_to_tensor(observation_map, dtype=dtype)
-            if not isinstance(observation_map, tf.Tensor)
-            else observation_map
-        )
-        self.transition_covariance = (
-            tf.convert_to_tensor(transition_covariance, dtype=dtype)
-            if not isinstance(transition_covariance, tf.Tensor)
-            else transition_covariance
-        )
-        self.observation_covariance = (
-            tf.convert_to_tensor(observation_covariance, dtype=dtype)
-            if not isinstance(observation_covariance, tf.Tensor)
-            else observation_covariance
-        )
+        self.transition_map =_convert_to_tensor(transition_map, self.dtype)
+        self.observation_map = _convert_to_tensor(observation_map, self.dtype)
+        self.transition_covariance = _convert_to_tensor(transition_covariance, self.dtype)
+        self.observation_covariance =_convert_to_tensor(observation_covariance, self.dtype)
         if transition_offsets is None:
             self.transition_offsets = tf.zeros(
                 transition_covariance.shape[0], dtype=dtype
             )
         else:
-            self.transition_offsets = (
-                tf.convert_to_tensor(transition_offsets, dtype=dtype)
-                if not isinstance(transition_offsets, tf.Tensor)
-                else transition_offsets
-            )
+            self.transition_offsets = _convert_to_tensor(transition_offsets, self.dtype)
         if observation_offsets is None:
             self.observation_offsets = tf.zeros(
                 observation_covariance.shape[0], dtype=dtype
             )
         else:
-            self.observation_offsets = (
-                tf.convert_to_tensor(observation_offsets, dtype=dtype)
-                if not isinstance(observation_offsets, tf.Tensor)
-                else observation_offsets
-            )
-        self.x0 = (
-            tf.convert_to_tensor(x0, dtype=dtype)
-            if not isinstance(x0, tf.Tensor)
-            else x0
-        )
-        self.P0 = (
-            tf.convert_to_tensor(P0, dtype=dtype)
-            if not isinstance(P0, tf.Tensor)
-            else P0
-        )
+            self.observation_offsets = _convert_to_tensor(observation_offsets, self.dtype)
+        self.x0 = _convert_to_tensor(x0, self.dtype)
+        self.P0 = _convert_to_tensor(P0, self.dtype)
         state_size = self.transition_covariance.shape[-1]
         assert (
             state_size == P0.shape[0] == P0.shape[1] == x0.shape[0]
@@ -168,19 +151,7 @@ class KalmanFilter(BaseFilter):
         return scan_fn
 
     def _get_smoother_function(self):
-        def scan_fn(carry, elems):
-            x_s_next, P_s_next = carry
-            x_f, P_f, x_p, P_p = elems
-
-            Pxy = P_f @ tf.transpose(self.transition_map)
-            G = tf.transpose(tf.linalg.solve(tf.transpose(P_p), tf.transpose(Pxy)))
-
-            x_smooth = x_f + tf.linalg.matvec(G, x_s_next - x_p)
-            P_smooth = P_f + G @ (P_s_next - P_p) @ tf.transpose(G)
-            P_smooth = 0.5 * (P_smooth + tf.transpose(P_smooth))
-            return x_smooth, P_smooth
-
-        return scan_fn
+        return _get_linear_smoother_function(self.transition_map)
 
     def _get_fillna_from_state_function(self):
         use_tf_map = False

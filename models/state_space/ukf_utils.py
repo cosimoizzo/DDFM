@@ -4,7 +4,24 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 
-from models.state_space.base_filter import BaseFilter
+from models.state_space.base_filter import BaseFilter, _convert_to_tensor
+
+
+def _compute_weights(L, lamb, state_size, alpha, beta):
+    denom = L + lamb
+
+    num_sigma = 2 * state_size + 1
+    wm = tf.fill([num_sigma], 1.0 / (2.0 * denom))
+    wc = tf.fill([num_sigma], 1.0 / (2.0 * denom))
+
+    # Overwrite the 0th weight
+    wm0 = lamb / denom
+    wc0 = lamb / denom + (1.0 - alpha ** 2 + beta)
+
+    wm = tf.tensor_scatter_nd_update(wm, [[0]], [wm0])
+    wc = tf.tensor_scatter_nd_update(wc, [[0]], [wc0])
+
+    return wm, wc
 
 
 class AdditiveUKF(BaseFilter):
@@ -29,6 +46,7 @@ class AdditiveUKF(BaseFilter):
         kappa: Optional[float] = 0.0,
         beta: Optional[float] = 2.0,
         dtype: Optional[tf.DType] = tf.float64,
+        use_jitter_cov: bool = True
     ):
         """
 
@@ -43,6 +61,7 @@ class AdditiveUKF(BaseFilter):
             kappa: secondary scale parameter
             beta: incorporates prior knowledge of the distribution of the latent states (for gaussian 2.0 is optimal)
             dtype:
+            use_jitter_cov: if True, then filtered covariance is regularized to handle possible numeral issues
 
         """
         if not isinstance(transition_map, keras.Model) or not isinstance(
@@ -54,12 +73,10 @@ class AdditiveUKF(BaseFilter):
         self.transition_map = transition_map
         self.observation_map = observation_map
         self.dtype = dtype
-        def _convert_to_tensor(matrix):
-            return tf.convert_to_tensor(matrix, dtype=dtype) if not isinstance(matrix, tf.Tensor) else matrix
-        self.transition_covariance = _convert_to_tensor(transition_covariance)
-        self.observation_covariance = _convert_to_tensor(observation_covariance)
-        self.x0 = _convert_to_tensor(x0)
-        self.P0 = _convert_to_tensor(P0)
+        self.transition_covariance = _convert_to_tensor(transition_covariance, self.dtype)
+        self.observation_covariance = _convert_to_tensor(observation_covariance, self.dtype)
+        self.x0 = _convert_to_tensor(x0, self.dtype)
+        self.P0 = _convert_to_tensor(P0, self.dtype)
         state_size = self.transition_covariance.shape[-1]
         if alpha is None:
             # target wm[0]: small positive, decreasing with n is fine
@@ -74,26 +91,8 @@ class AdditiveUKF(BaseFilter):
         self.state_size = state_size
         self.L = tf.cast(self.state_size, dtype=dtype)
         self.lamb = tf.cast((alpha**2) * (state_size + kappa) - state_size, dtype=dtype)
-        self.wm, self.wc = self._compute_weights()
-
-    def get_default_initial_state(self) -> Tuple[tf.Tensor, tf.Tensor]:
-        return self.x0, self.P0
-
-    def _compute_weights(self):
-        denom = self.L + self.lamb
-
-        num_sigma = 2 * self.state_size + 1
-        wm = tf.fill([num_sigma], 1.0 / (2.0 * denom))
-        wc = tf.fill([num_sigma], 1.0 / (2.0 * denom))
-
-        # Overwrite the 0th weight
-        wm0 = self.lamb / denom
-        wc0 = self.lamb / denom + (1.0 - self.alpha**2 + self.beta)
-
-        wm = tf.tensor_scatter_nd_update(wm, [[0]], [wm0])
-        wc = tf.tensor_scatter_nd_update(wc, [[0]], [wc0])
-
-        return wm, wc
+        self.wm, self.wc = _compute_weights(self.L, self.lamb, self.state_size, self.alpha, self.beta)
+        self.eps = tf.cast(1e-12 if self.dtype == tf.float64 else 1e-5, self.dtype) if use_jitter_cov else tf.cast(0, self.dtype)
 
     def _sigma_points(self, x: tf.Tensor, P: tf.Tensor):
         cholP = tf.linalg.cholesky(P)
@@ -131,8 +130,7 @@ class AdditiveUKF(BaseFilter):
         """
         UKF update step.
         """
-        nan_mask = tf.math.is_nan(y)
-        nan_mask = tf.reshape(nan_mask, [-1])
+        nan_mask   = tf.reshape(tf.math.is_nan(y), [-1])
 
         sigmas_obs = self.observation_map(sigmas_f)
         tmp_cov = tf.identity(self.observation_covariance)
@@ -163,6 +161,8 @@ class AdditiveUKF(BaseFilter):
         x_upd = x_pred + tf.linalg.matvec(K, keras.ops.nan_to_num(y, nan=0.0) - y_pred)
         P_upd = P_pred - K @ S @ tf.transpose(K)
         P_upd = 0.5 * (P_upd + tf.transpose(P_upd))
+        scale = tf.linalg.trace(P_upd) / tf.cast(self.state_size, self.dtype)
+        P_upd = P_upd + self.eps * scale * tf.eye(self.state_size, dtype=self.dtype)
 
         return x_upd, P_upd
 

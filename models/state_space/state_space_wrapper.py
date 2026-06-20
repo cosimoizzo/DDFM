@@ -1,16 +1,34 @@
-from typing import Tuple, Optional
+from dataclasses import dataclass
 from enum import StrEnum
+from typing import Tuple, Optional, Union
 
 import numpy as np
 import tensorflow as tf
+from tensorflow import keras
 
 from models.state_space.kf_utils import KalmanFilter
 from models.state_space.ukf_utils import AdditiveUKF
+from models.state_space.marginalized_ukf_utils import MarginalizedUKF
 
 
 class FilterType(StrEnum):
     KalmanFilter = "KalmanFilter"
     UnscentedKalmanFilter = "UnscentedKalmanFilter"
+    Marginalized_UKF = "Marginalized_UKF"
+
+
+@dataclass
+class TransitionParams:
+    transition_map: Union[tf.Tensor, np.ndarray, keras.Model]
+    transition_covariance: Union[tf.Tensor, np.ndarray]
+    transition_offsets: Optional[Union[tf.Tensor, np.ndarray]] = None
+
+@dataclass
+class MeasurementParams:
+    observation_map: Union[keras.Model, tf.Tensor, np.ndarray]
+    observation_covariance: Union[tf.Tensor, np.ndarray]
+    observation_offsets: Optional[Union[tf.Tensor, np.ndarray]] = None
+    linear_observation_map: Optional[Union[tf.Tensor, np.ndarray]] = None  # for MarginalizedUKF
 
 
 class StateSpace:
@@ -20,8 +38,8 @@ class StateSpace:
 
     def __init__(
         self,
-        transition_params: dict,
-        measurement_params: dict,
+        transition_params: Union[dict, TransitionParams],
+        measurement_params: Union[dict, MeasurementParams],
         mean_y: np.ndarray = None,
         sigma_y: np.ndarray = None,
         x0: np.ndarray = None,
@@ -41,7 +59,10 @@ class StateSpace:
             filter_type: the type of filter selected
 
         """
-        super().__init__()
+        if isinstance(transition_params, dict):
+            transition_params = TransitionParams(**transition_params)
+        if isinstance(measurement_params, dict):
+            measurement_params = MeasurementParams(**measurement_params)
         self.mean_y = mean_y
         self.sigma_y = sigma_y
         if x0 is not None and np.sum(np.isnan(x0)):
@@ -63,6 +84,8 @@ class StateSpace:
             self._build_lgssm(transition_params, measurement_params)
         elif filter_type == FilterType.UnscentedKalmanFilter:
             self._build_ukf(transition_params, measurement_params)
+        elif filter_type == FilterType.Marginalized_UKF:
+            self._build_marginalized_ukf(transition_params, measurement_params)
         else:
             raise NotImplementedError("{} not implemented".format(filter_type))
 
@@ -77,7 +100,7 @@ class StateSpace:
             y_cpy = np.reshape(y_cpy, (1, y_cpy.shape[0]))
         return y_cpy
 
-    def _build_lgssm(self, transition_params: dict, measurement_params: dict) -> None:
+    def _build_lgssm(self, transition_params: TransitionParams, measurement_params: MeasurementParams) -> None:
         """
         Build a linear gaussian state space model of the following form:
             measurement: y_t = b + H x_t + v_t; v_t ∼ N(0, R)
@@ -91,14 +114,11 @@ class StateSpace:
         """
 
         self.observation_map, self.observation_covariance = (
-            measurement_params["observation_map"],
-            measurement_params["observation_covariance"],
+            measurement_params.observation_map,
+            measurement_params.observation_covariance,
         )
-        self.observation_offsets = measurement_params.get("observation_offsets", None)
-        self.transition_map, self.transition_covariance = (
-            transition_params["transition_map"],
-            transition_params["transition_covariance"],
-        )
+        self.observation_offsets = measurement_params.observation_offsets
+        self.transition_map, self.transition_covariance = transition_params.transition_map, transition_params.transition_covariance
         self.ssm_repr = KalmanFilter(
             transition_map=self.transition_map,
             observation_map=self.observation_map,
@@ -110,7 +130,7 @@ class StateSpace:
             dtype=self.dtype,
         )
 
-    def _build_ukf(self, transition_params: dict, measurement_params: dict) -> None:
+    def _build_ukf(self, transition_params: TransitionParams, measurement_params: MeasurementParams) -> None:
         """
         Build a state space model of the following form:
             measurement: y_t = H(x_t) + v_t; v_t ∼ N(0, R)
@@ -124,14 +144,11 @@ class StateSpace:
         """
 
         self.observation_map, self.observation_covariance = (
-            measurement_params["observation_map"],
-            measurement_params["observation_covariance"],
+            measurement_params.observation_map,
+            measurement_params.observation_covariance,
         )
         self.observation_offsets = None
-        self.transition_map, self.transition_covariance = (
-            transition_params["transition_map"],
-            transition_params["transition_covariance"],
-        )
+        self.transition_map, self.transition_covariance = transition_params.transition_map, transition_params.transition_covariance
         self.ssm_repr = AdditiveUKF(
             transition_map=self.transition_map,
             observation_map=self.observation_map,
@@ -140,6 +157,36 @@ class StateSpace:
             x0=self.x0,
             P0=self.P0,
             dtype=self.dtype,
+        )
+
+    def _build_marginalized_ukf(self, transition_params: TransitionParams, measurement_params: MeasurementParams) -> None:
+        """
+        Build a state space model of the following form:
+            measurement: y_t = H(x_t) + v_t; v_t ∼ N(0, R)
+            transition: x_t = F(x_t-1) + w_t; w_t ∼ N(0, Q)
+        Args:
+            transition_params: parameters of the transition equation
+            measurement_params: parameters of the measurement equation
+
+        Returns:
+            None, it updates the class attributes.
+        """
+
+        self.observation_map, self.observation_covariance = (
+            measurement_params.observation_map,
+            measurement_params.observation_covariance,
+        )
+        self.observation_offsets = None
+        self.transition_map, self.transition_covariance = transition_params.transition_map, transition_params.transition_covariance
+        self.ssm_repr = MarginalizedUKF(
+            transition_map=self.transition_map,
+            observation_map=self.observation_map,
+            transition_covariance=self.transition_covariance,
+            observation_covariance=self.observation_covariance,
+            x0=self.x0,
+            P0=self.P0,
+            dtype=self.dtype,
+            linear_observation_map=measurement_params.linear_observation_map
         )
 
     def predict(self, y: np.ndarray, steps_ahead: int) -> Tuple[np.ndarray, np.ndarray]:
