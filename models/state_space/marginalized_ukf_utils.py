@@ -11,7 +11,7 @@ from models.state_space.ukf_utils import _compute_weights
 
 class MarginalizedUKF(BaseFilter):
     """
-    Rao-Blackwellized UKF for state-space models with linear/nonlinear split:
+    Marginalize (Rao-Blackwellized) UKF for state-space models with linear/nonlinear split:
 
         z_t = [x_t; ε_t]      x: nonlinear sub-state (e.g. common factors)
                               ε: linear sub-state    (e.g. idio AR(1))
@@ -53,9 +53,19 @@ class MarginalizedUKF(BaseFilter):
             None,
             dtype,
         )
-        self.transition_map = _convert_to_tensor(transition_map, self.dtype)
-        self.transition_covariance = _convert_to_tensor(
-            transition_covariance, self.dtype
+        # Transition_map and transition_covariance are (non-trainable) Variables
+        # so that EM-style updates via `.assign(...)` are seen by the already-traced
+        # filter graphs. A plain constant tensor would be baked into the graph at
+        # trace time and any later reassignment silently ignored.
+        self.transition_map = tf.Variable(
+            _convert_to_tensor(transition_map, self.dtype),
+            trainable=False,
+            name="transition_map",
+        )
+        self.transition_covariance = tf.Variable(
+            _convert_to_tensor(transition_covariance, self.dtype),
+            trainable=False,
+            name="transition_covariance",
         )
         self.observation_map = observation_map
         self.observation_covariance = _convert_to_tensor(
