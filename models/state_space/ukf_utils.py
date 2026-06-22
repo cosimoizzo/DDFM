@@ -70,8 +70,17 @@ class AdditiveUKF(BaseFilter):
             raise ValueError(
                 "transition_map and observation_map must be of type keras.Model"
             )
-        super().__init__(transition_map, observation_map, transition_covariance, observation_covariance, x0, P0,
-                         None, None, dtype)
+        super().__init__(
+            transition_map,
+            observation_map,
+            transition_covariance,
+            observation_covariance,
+            x0,
+            P0,
+            None,
+            None,
+            dtype,
+        )
         self.transition_map = transition_map
         self.observation_map = observation_map
         self.dtype = dtype

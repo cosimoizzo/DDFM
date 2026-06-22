@@ -54,8 +54,17 @@ class KalmanFilter(BaseFilter):
             dtype:
 
         """
-        super().__init__(transition_map, observation_map, transition_covariance, observation_covariance, x0, P0,
-                         transition_offsets, observation_offsets, dtype)
+        super().__init__(
+            transition_map,
+            observation_map,
+            transition_covariance,
+            observation_covariance,
+            x0,
+            P0,
+            transition_offsets,
+            observation_offsets,
+            dtype,
+        )
         self.transition_map = _convert_to_tensor(transition_map, self.dtype)
         self.observation_map = _convert_to_tensor(observation_map, self.dtype)
         self.transition_covariance = _convert_to_tensor(

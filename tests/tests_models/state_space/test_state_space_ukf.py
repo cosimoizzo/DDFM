@@ -4,7 +4,10 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 
-from tests.tests_models.state_space.test_state_space_kf import TestBase, R2_THRESHOLD_FILTER
+from tests.tests_models.state_space.test_state_space_kf import (
+    TestBase,
+    R2_THRESHOLD_FILTER,
+)
 from models.state_space.state_space_wrapper import StateSpace, FilterType
 from models.state_space.kf_utils import KalmanFilter
 from models.state_space.ukf_utils import AdditiveUKF
