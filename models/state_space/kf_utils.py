@@ -19,6 +19,7 @@ def _get_linear_smoother_function(transition_map: tf.Tensor):
         P_smooth = P_f + G @ (P_s_next - P_p) @ tf.transpose(G)
         P_smooth = 0.5 * (P_smooth + tf.transpose(P_smooth))
         return x_smooth, P_smooth
+
     return scan_fn
 
 
@@ -54,10 +55,14 @@ class KalmanFilter(BaseFilter):
 
         """
         self.dtype = dtype
-        self.transition_map =_convert_to_tensor(transition_map, self.dtype)
+        self.transition_map = _convert_to_tensor(transition_map, self.dtype)
         self.observation_map = _convert_to_tensor(observation_map, self.dtype)
-        self.transition_covariance = _convert_to_tensor(transition_covariance, self.dtype)
-        self.observation_covariance =_convert_to_tensor(observation_covariance, self.dtype)
+        self.transition_covariance = _convert_to_tensor(
+            transition_covariance, self.dtype
+        )
+        self.observation_covariance = _convert_to_tensor(
+            observation_covariance, self.dtype
+        )
         if transition_offsets is None:
             self.transition_offsets = tf.zeros(
                 transition_covariance.shape[0], dtype=dtype
@@ -69,7 +74,9 @@ class KalmanFilter(BaseFilter):
                 observation_covariance.shape[0], dtype=dtype
             )
         else:
-            self.observation_offsets = _convert_to_tensor(observation_offsets, self.dtype)
+            self.observation_offsets = _convert_to_tensor(
+                observation_offsets, self.dtype
+            )
         self.x0 = _convert_to_tensor(x0, self.dtype)
         self.P0 = _convert_to_tensor(P0, self.dtype)
         state_size = self.transition_covariance.shape[-1]
@@ -155,13 +162,20 @@ class KalmanFilter(BaseFilter):
 
     def _get_fillna_from_state_function(self):
         use_tf_map = False
+
         def map_fn(state_mean, state_covariance):
             y_pred = (
-                    tf.linalg.matvec(self.observation_map, state_mean)
-                    + self.observation_offsets
+                tf.linalg.matvec(self.observation_map, state_mean)
+                + self.observation_offsets
             )
-            S_pred = tf.einsum('ab,tbc,dc->tad', self.observation_map, state_covariance, self.observation_map)
+            S_pred = tf.einsum(
+                "ab,tbc,dc->tad",
+                self.observation_map,
+                state_covariance,
+                self.observation_map,
+            )
             return y_pred, S_pred
+
         return map_fn, use_tf_map
 
     def predict_from_state(

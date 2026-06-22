@@ -60,7 +60,6 @@ class TestMarginalizedUKF(TestBase):
         self.assertGreater(r2, R2_THRESHOLD_FILTER)
         np.testing.assert_allclose(covariance_kf, covariance_m_ukf)
 
-
     def test_smooth(self):
         y_t, x_t = self._gen_values()
         kalman_filter = KalmanFilter(
@@ -126,7 +125,8 @@ class TestMarginalizedUKF(TestBase):
         Comparing predicted values with calculated from smoothed factors
         """
         y_t, x_t = self._gen_values()
-        m_ukf = MarginalizedUKF(transition_map=self.F,
+        m_ukf = MarginalizedUKF(
+            transition_map=self.F,
             observation_map=self._make_linear_keras_model(
                 self.F.shape[0], self.H.shape[0], self.H.T
             ),
@@ -144,7 +144,12 @@ class TestMarginalizedUKF(TestBase):
         preds_manual_y[1] = np.dot(self.H, np.dot(self.F, hat_x[-1, :]))
         cov_pred_manual = np.zeros_like(cov_pred)
         cov_pred_manual[0] = np.dot(np.dot(self.H, cov_x[-1, ...]), self.H.T) + self.R
-        cov_pred_manual[1] = np.dot(np.dot(self.H, self.F @ cov_x[-1, ...] @ self.F.T + self.Q), self.H.T) + self.R
+        cov_pred_manual[1] = (
+            np.dot(
+                np.dot(self.H, self.F @ cov_x[-1, ...] @ self.F.T + self.Q), self.H.T
+            )
+            + self.R
+        )
         np.testing.assert_allclose(preds_y, preds_manual_y, rtol=1e-5)
         np.testing.assert_allclose(cov_pred, cov_pred_manual)
 

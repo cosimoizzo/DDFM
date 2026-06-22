@@ -206,7 +206,10 @@ def _convert_linear_decoder_to_numpy(
             )
     return bs, ws
 
-def _get_idio_matrix(n_vars: int, mix_freq_layer: Optional[MixedFreqMQLayer] = None) -> np.ndarray:
+
+def _get_idio_matrix(
+    n_vars: int, mix_freq_layer: Optional[MixedFreqMQLayer] = None
+) -> np.ndarray:
     if mix_freq_layer is not None:
         # TODO: consider adding lags only for idio of quarterly variables
         idio_loadings = np.eye(n_vars)
@@ -218,7 +221,7 @@ def _get_idio_matrix(n_vars: int, mix_freq_layer: Optional[MixedFreqMQLayer] = N
                 ),
                 np.kron(
                     np.array(mix_freq_layer.aggr_restr),
-                    idio_loadings[mix_freq_layer.start_quarterly:, :],
+                    idio_loadings[mix_freq_layer.start_quarterly :, :],
                 ),
             )
         )

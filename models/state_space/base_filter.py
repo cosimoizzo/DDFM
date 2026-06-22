@@ -4,8 +4,14 @@ from typing import Tuple, Optional
 import tensorflow as tf
 import numpy as np
 
+
 def _convert_to_tensor(matrix, dtype):
-    return tf.convert_to_tensor(matrix, dtype=dtype) if not isinstance(matrix, tf.Tensor) else matrix
+    return (
+        tf.convert_to_tensor(matrix, dtype=dtype)
+        if not isinstance(matrix, tf.Tensor)
+        else matrix
+    )
+
 
 class BaseFilter(ABC):
     @abstractmethod
@@ -189,12 +195,13 @@ class BaseFilter(ABC):
 
         return xs_smooth.numpy(), Ps_smooth.numpy(), Ps_cross_vals.numpy()
 
-    def fill_na(self,
-                y: np.ndarray,
-                x0: Optional[np.ndarray] = None,
-                P0: Optional[np.ndarray] = None,
-                keep_non_missing: bool = False
-                ) -> Tuple[np.ndarray, np.ndarray]:
+    def fill_na(
+        self,
+        y: np.ndarray,
+        x0: Optional[np.ndarray] = None,
+        P0: Optional[np.ndarray] = None,
+        keep_non_missing: bool = False,
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Fill missing values in the observables
         Args:
@@ -218,7 +225,7 @@ class BaseFilter(ABC):
                 fn_output_signature=(
                     tf.TensorSpec((obs_size,), self.dtype),
                     tf.TensorSpec((obs_size, obs_size), self.dtype),
-                )
+                ),
             )
         else:
             y_mean, y_cov = f(states_mean, states_cov)

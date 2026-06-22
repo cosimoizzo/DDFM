@@ -16,7 +16,7 @@ def _compute_weights(L, lamb, state_size, alpha, beta):
 
     # Overwrite the 0th weight
     wm0 = lamb / denom
-    wc0 = lamb / denom + (1.0 - alpha ** 2 + beta)
+    wc0 = lamb / denom + (1.0 - alpha**2 + beta)
 
     wm = tf.tensor_scatter_nd_update(wm, [[0]], [wm0])
     wc = tf.tensor_scatter_nd_update(wc, [[0]], [wc0])
@@ -46,7 +46,7 @@ class AdditiveUKF(BaseFilter):
         kappa: Optional[float] = 0.0,
         beta: Optional[float] = 2.0,
         dtype: Optional[tf.DType] = tf.float64,
-        use_jitter_cov: bool = True
+        use_jitter_cov: bool = True,
     ):
         """
 
@@ -73,8 +73,12 @@ class AdditiveUKF(BaseFilter):
         self.transition_map = transition_map
         self.observation_map = observation_map
         self.dtype = dtype
-        self.transition_covariance = _convert_to_tensor(transition_covariance, self.dtype)
-        self.observation_covariance = _convert_to_tensor(observation_covariance, self.dtype)
+        self.transition_covariance = _convert_to_tensor(
+            transition_covariance, self.dtype
+        )
+        self.observation_covariance = _convert_to_tensor(
+            observation_covariance, self.dtype
+        )
         self.x0 = _convert_to_tensor(x0, self.dtype)
         self.P0 = _convert_to_tensor(P0, self.dtype)
         state_size = self.transition_covariance.shape[-1]
@@ -91,8 +95,14 @@ class AdditiveUKF(BaseFilter):
         self.state_size = state_size
         self.L = tf.cast(self.state_size, dtype=dtype)
         self.lamb = tf.cast((alpha**2) * (state_size + kappa) - state_size, dtype=dtype)
-        self.wm, self.wc = _compute_weights(self.L, self.lamb, self.state_size, self.alpha, self.beta)
-        self.eps = tf.cast(1e-12 if self.dtype == tf.float64 else 1e-5, self.dtype) if use_jitter_cov else tf.cast(0, self.dtype)
+        self.wm, self.wc = _compute_weights(
+            self.L, self.lamb, self.state_size, self.alpha, self.beta
+        )
+        self.eps = (
+            tf.cast(1e-12 if self.dtype == tf.float64 else 1e-5, self.dtype)
+            if use_jitter_cov
+            else tf.cast(0, self.dtype)
+        )
 
     def _sigma_points(self, x: tf.Tensor, P: tf.Tensor):
         cholP = tf.linalg.cholesky(P)
@@ -130,7 +140,7 @@ class AdditiveUKF(BaseFilter):
         """
         UKF update step.
         """
-        nan_mask   = tf.reshape(tf.math.is_nan(y), [-1])
+        nan_mask = tf.reshape(tf.math.is_nan(y), [-1])
 
         sigmas_obs = self.observation_map(sigmas_f)
         tmp_cov = tf.identity(self.observation_covariance)
@@ -178,6 +188,7 @@ class AdditiveUKF(BaseFilter):
 
     def _get_fillna_from_state_function(self):
         use_tf_map = True
+
         def map_fn(elem):
             state_mean, state_covariance = elem
             sigmas_f = self._sigma_points(state_mean, state_covariance)
@@ -186,6 +197,7 @@ class AdditiveUKF(BaseFilter):
                 sigmas_obs, self.observation_covariance
             )
             return y_pred, S_pred
+
         return map_fn, use_tf_map
 
     def _get_smoother_function(self):
@@ -221,9 +233,7 @@ class AdditiveUKF(BaseFilter):
             dxp = sigmas_ft - x_p[tf.newaxis, :]
             Pxy = tf.einsum("i,ij,ik->jk", self.wc, dx, dxp)
 
-            G = tf.transpose(
-                tf.linalg.solve(tf.transpose(P_p), tf.transpose(Pxy))
-            )
+            G = tf.transpose(tf.linalg.solve(tf.transpose(P_p), tf.transpose(Pxy)))
 
             x_smooth = x_f + tf.linalg.matvec(G, x_s_next - x_p)
             P_smooth = P_f + G @ (P_s_next - P_p) @ tf.transpose(G)

@@ -338,14 +338,14 @@ class TestDDFMMonthlyQuarterlyNonLinDec(TestDDFM):
             )
             np.testing.assert_array_almost_equal(
                 ddfm.state_space.transition_map[
-                    self.sim.r: self.sim.r * 5, : self.sim.r * 5
+                    self.sim.r : self.sim.r * 5, : self.sim.r * 5
                 ],
                 np.eye(self.sim.r * 4, self.sim.r * 5),
                 err_msg=msg_if_fail,
             )
             np.testing.assert_array_almost_equal(
                 ddfm.state_space.transition_map[
-                    self.sim.r * 5 + self.sim.n:, self.sim.r * 5:
+                    self.sim.r * 5 + self.sim.n :, self.sim.r * 5 :
                 ],
                 np.eye(self.sim.n * 4, self.sim.n * 5),
                 err_msg=msg_if_fail,

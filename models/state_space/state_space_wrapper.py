@@ -23,12 +23,15 @@ class TransitionParams:
     transition_covariance: Union[tf.Tensor, np.ndarray]
     transition_offsets: Optional[Union[tf.Tensor, np.ndarray]] = None
 
+
 @dataclass
 class MeasurementParams:
     observation_map: Union[keras.Model, tf.Tensor, np.ndarray]
     observation_covariance: Union[tf.Tensor, np.ndarray]
     observation_offsets: Optional[Union[tf.Tensor, np.ndarray]] = None
-    linear_observation_map: Optional[Union[tf.Tensor, np.ndarray]] = None  # for MarginalizedUKF
+    linear_observation_map: Optional[Union[tf.Tensor, np.ndarray]] = (
+        None  # for MarginalizedUKF
+    )
 
 
 class StateSpace:
@@ -100,7 +103,9 @@ class StateSpace:
             y_cpy = np.reshape(y_cpy, (1, y_cpy.shape[0]))
         return y_cpy
 
-    def _build_lgssm(self, transition_params: TransitionParams, measurement_params: MeasurementParams) -> None:
+    def _build_lgssm(
+        self, transition_params: TransitionParams, measurement_params: MeasurementParams
+    ) -> None:
         """
         Build a linear gaussian state space model of the following form:
             measurement: y_t = b + H x_t + v_t; v_t ∼ N(0, R)
@@ -118,7 +123,10 @@ class StateSpace:
             measurement_params.observation_covariance,
         )
         self.observation_offsets = measurement_params.observation_offsets
-        self.transition_map, self.transition_covariance = transition_params.transition_map, transition_params.transition_covariance
+        self.transition_map, self.transition_covariance = (
+            transition_params.transition_map,
+            transition_params.transition_covariance,
+        )
         self.ssm_repr = KalmanFilter(
             transition_map=self.transition_map,
             observation_map=self.observation_map,
@@ -130,7 +138,9 @@ class StateSpace:
             dtype=self.dtype,
         )
 
-    def _build_ukf(self, transition_params: TransitionParams, measurement_params: MeasurementParams) -> None:
+    def _build_ukf(
+        self, transition_params: TransitionParams, measurement_params: MeasurementParams
+    ) -> None:
         """
         Build a state space model of the following form:
             measurement: y_t = H(x_t) + v_t; v_t ∼ N(0, R)
@@ -148,7 +158,10 @@ class StateSpace:
             measurement_params.observation_covariance,
         )
         self.observation_offsets = None
-        self.transition_map, self.transition_covariance = transition_params.transition_map, transition_params.transition_covariance
+        self.transition_map, self.transition_covariance = (
+            transition_params.transition_map,
+            transition_params.transition_covariance,
+        )
         self.ssm_repr = AdditiveUKF(
             transition_map=self.transition_map,
             observation_map=self.observation_map,
@@ -159,7 +172,9 @@ class StateSpace:
             dtype=self.dtype,
         )
 
-    def _build_marginalized_ukf(self, transition_params: TransitionParams, measurement_params: MeasurementParams) -> None:
+    def _build_marginalized_ukf(
+        self, transition_params: TransitionParams, measurement_params: MeasurementParams
+    ) -> None:
         """
         Build a state space model of the following form:
             measurement: y_t = H(x_t) + v_t; v_t ∼ N(0, R)
@@ -177,7 +192,10 @@ class StateSpace:
             measurement_params.observation_covariance,
         )
         self.observation_offsets = None
-        self.transition_map, self.transition_covariance = transition_params.transition_map, transition_params.transition_covariance
+        self.transition_map, self.transition_covariance = (
+            transition_params.transition_map,
+            transition_params.transition_covariance,
+        )
         self.ssm_repr = MarginalizedUKF(
             transition_map=self.transition_map,
             observation_map=self.observation_map,
@@ -186,7 +204,7 @@ class StateSpace:
             x0=self.x0,
             P0=self.P0,
             dtype=self.dtype,
-            linear_observation_map=measurement_params.linear_observation_map
+            linear_observation_map=measurement_params.linear_observation_map,
         )
 
     def predict(self, y: np.ndarray, steps_ahead: int) -> Tuple[np.ndarray, np.ndarray]:

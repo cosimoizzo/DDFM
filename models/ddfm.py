@@ -98,7 +98,11 @@ class DDFM(FactorModel):
         if self.structure_decoder is None:
             self._filter_type = FilterType.KalmanFilter
         else:
-            self._filter_type = FilterType.Marginalized_UKF if _USE_M_UKF else FilterType.UnscentedKalmanFilter
+            self._filter_type = (
+                FilterType.Marginalized_UKF
+                if _USE_M_UKF
+                else FilterType.UnscentedKalmanFilter
+            )
         # seed setting
         self.seed = seed
         self.rng = np.random.RandomState(seed)
@@ -302,7 +306,14 @@ class DDFM(FactorModel):
             "observation_offsets": bs,
         }
         if self._filter_type == FilterType.Marginalized_UKF:
-            measurement["linear_observation_map"] = _get_idio_matrix(self.data.shape[1], self.decoder.get_layer(index=-1))
+            measurement["linear_observation_map"] = _get_idio_matrix(
+                self.data.shape[1],
+                (
+                    self.decoder.get_layer(index=-1)
+                    if self.quarterly_start is not None
+                    else None
+                ),
+            )
         transition = {"transition_map": F, "transition_covariance": Q}
         return StateSpace(
             transition,
