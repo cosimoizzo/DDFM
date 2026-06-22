@@ -42,8 +42,8 @@ class MarginalizedUKF(BaseFilter):
         linear_start = transition_covariance.shape[0] - linear_observation_map.shape[1]
         if not isinstance(observation_map, keras.Model):
             raise ValueError("observation_map must be keras.Model")
-
-        self.dtype = dtype
+        super().__init__(transition_map, observation_map, transition_covariance, observation_covariance, x0, P0,
+                         None, None, dtype)
         self.transition_map = _convert_to_tensor(transition_map, self.dtype)
         self.transition_covariance = _convert_to_tensor(
             transition_covariance, self.dtype

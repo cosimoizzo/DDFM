@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Union
 
 import tensorflow as tf
+from tensorflow import keras
 import numpy as np
 
 
@@ -14,6 +15,45 @@ def _convert_to_tensor(matrix, dtype):
 
 
 class BaseFilter(ABC):
+    def __init__(self,
+                 transition_map: Union[tf.Tensor, np.ndarray, keras.Model],
+                 observation_map: Union[tf.Tensor, np.ndarray, keras.Model],
+                 transition_covariance: Union[tf.Tensor, np.ndarray],
+                 observation_covariance: Union[tf.Tensor, np.ndarray],
+                 x0: Union[tf.Tensor, np.ndarray],
+                 P0: Union[tf.Tensor, np.ndarray],
+                 transition_offsets: Union[tf.Tensor, np.ndarray] = None,
+                 observation_offsets: Union[tf.Tensor, np.ndarray] = None,
+                 dtype: Optional[tf.DType] = tf.float64):
+        obs_size = observation_covariance.shape[0]
+        state_size = transition_covariance.shape[0]
+        self.dtype = dtype
+        self._filter_graph = tf.function(
+            self._filter_impl,
+            input_signature=[tf.TensorSpec([None, obs_size], self.dtype), tf.TensorSpec([state_size], self.dtype), tf.TensorSpec([state_size, state_size], self.dtype)],
+        )
+        self._smoother_graph = tf.function(
+            self._smoother_impl,
+            input_signature=[tf.TensorSpec([None, state_size], self.dtype), tf.TensorSpec([None, state_size, state_size], self.dtype),
+                             tf.TensorSpec([None, state_size], self.dtype), tf.TensorSpec([None, state_size, state_size], self.dtype)],
+        )
+        self._smoother_withcrosscov_graph = tf.function(
+            self._smoother_withcrosscov_impl,
+            input_signature=[tf.TensorSpec([None, state_size], self.dtype),
+                             tf.TensorSpec([None, state_size, state_size], self.dtype),
+                             tf.TensorSpec([None, state_size], self.dtype),
+                             tf.TensorSpec([None, state_size, state_size], self.dtype)],
+        )
+        self.obs_size = obs_size
+        self._fillna_graph = tf.function(
+            self._fillna_impl,
+            input_signature=[
+                tf.TensorSpec([None, obs_size], self.dtype),
+                tf.TensorSpec([state_size], self.dtype),
+                tf.TensorSpec([state_size, state_size], self.dtype),
+            ],
+        )
+
     @abstractmethod
     def predict_from_state(
         self,
@@ -67,6 +107,59 @@ class BaseFilter(ABC):
             predicted_state_mean, predicted_state_covariance, steps_ahead
         )
 
+    def _filter_impl(self, ys: tf.Tensor, x_start: tf.Tensor, P_start: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor]:
+        xs_pred, Ps_pred, xs_filt, Ps_filt = tf.scan(
+            fn=self._get_filter_function(),
+            elems=ys,
+            initializer=(x_start, P_start, x_start, P_start),
+        )
+        return xs_pred, Ps_pred, xs_filt, Ps_filt
+
+    def _smoother_impl(self, xs_pred: tf.Tensor, Ps_pred: tf.Tensor, xs_filt: tf.Tensor, Ps_filt: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
+        elems = (
+            xs_filt[:-1],
+            Ps_filt[:-1],
+            xs_pred[:-1],
+            Ps_pred[:-1],
+        )
+        xs_smooth, Ps_smooth = tf.scan(
+            fn=self._get_smoother_function(),
+            elems=elems,
+            initializer=(xs_filt[-1], Ps_filt[-1]),
+            reverse=True,
+        )
+        return xs_smooth, Ps_smooth
+
+    def _smoother_withcrosscov_impl(self, xs_pred: tf.Tensor, Ps_pred: tf.Tensor, xs_filt: tf.Tensor, Ps_filt: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
+        dummy_cross = tf.zeros_like(Ps_filt[0])
+        elems = (xs_filt[:-1], Ps_filt[:-1], xs_pred[:-1], Ps_pred[:-1])
+        xs_smooth_vals, Ps_smooth_vals, Ps_cross_vals = tf.scan(
+            fn=self._get_smoother_with_cross_cov(),
+            elems=elems,
+            initializer=(xs_filt[-1], Ps_filt[-1], dummy_cross),
+            reverse=True,
+        )
+        return xs_smooth_vals, Ps_smooth_vals, Ps_cross_vals
+
+    def _fillna_impl(self, ys: tf.Tensor, x_start: tf.Tensor, P_start: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
+        xs_pred, Ps_pred, xs_filt, Ps_filt = self._filter_impl(ys, x_start, P_start)
+        xs_smooth, Ps_smooth = self._smoother_impl(xs_pred, Ps_pred, xs_filt, Ps_filt)
+        states_mean = tf.concat([xs_smooth, xs_filt[-1:]], axis=0)
+        states_cov = tf.concat([Ps_smooth, Ps_filt[-1:]], axis=0)
+        f, use_tf_map = self._get_fillna_from_state_function()
+        if use_tf_map:  # UKF / MUKF: per-step loop
+            y_mean, y_cov = tf.map_fn(
+                fn=f,
+                elems=(states_mean, states_cov),
+                fn_output_signature=(
+                    tf.TensorSpec((self.obs_size,), self.dtype),
+                    tf.TensorSpec((self.obs_size, self.obs_size), self.dtype),
+                ),
+            )
+        else:  # KF: already vectorized einsum
+            y_mean, y_cov = f(states_mean, states_cov)
+        return y_mean, y_cov
+
     def filter(
         self,
         y: np.ndarray,
@@ -90,11 +183,7 @@ class BaseFilter(ABC):
         P_start = P if P0 is None else tf.convert_to_tensor(P0, dtype=self.dtype)
 
         y_as_tf = tf.convert_to_tensor(y, dtype=self.dtype)
-        _, _, xs_filt, Ps_filt = tf.scan(
-            fn=self._get_filter_function(),
-            elems=y_as_tf,
-            initializer=(x_start, P_start, x_start, P_start),
-        )
+        _, _, xs_filt, Ps_filt = self._filter_graph(y_as_tf, x_start, P_start)
         # xs_filt: (T, dim_x)
         # Ps_filt: (T, dim_x, dim_x)
         return xs_filt.numpy(), Ps_filt.numpy()
@@ -123,25 +212,8 @@ class BaseFilter(ABC):
 
         y_as_tf = tf.convert_to_tensor(y, dtype=self.dtype)
 
-        xs_pred, Ps_pred, xs_filt, Ps_filt = tf.scan(
-            fn=self._get_filter_function(),
-            elems=y_as_tf,
-            initializer=(x_start, P_start, x_start, P_start),
-        )
-
-        elems = (
-            xs_filt[:-1],
-            Ps_filt[:-1],
-            xs_pred[:-1],
-            Ps_pred[:-1],
-        )
-        xs_smooth, Ps_smooth = tf.scan(
-            fn=self._get_smoother_function(),
-            elems=elems,
-            initializer=(xs_filt[-1], Ps_filt[-1]),
-            reverse=True,
-        )
-
+        xs_pred, Ps_pred, xs_filt, Ps_filt = self._filter_graph(y_as_tf, x_start, P_start)
+        xs_smooth, Ps_smooth = self._smoother_graph(xs_pred, Ps_pred, xs_filt, Ps_filt)
         xs_smooth = tf.concat([xs_smooth, xs_filt[-1:]], axis=0)
         Ps_smooth = tf.concat([Ps_smooth, Ps_filt[-1:]], axis=0)
 
@@ -169,26 +241,15 @@ class BaseFilter(ABC):
             Ps_cross: np.ndarray (T-1, state_size, state_size)
                 Ps_cross[t] = Cov(x_t, x_{t+1} | y_{1:T})
         """
-        x = self.x0 if x0 is None else x0
-        P = self.P0 if P0 is None else P0
+        x, P = self.get_default_initial_state()
+        x_start = x if x0 is None else tf.convert_to_tensor(x0, dtype=self.dtype)
+        P_start = P if P0 is None else tf.convert_to_tensor(P0, dtype=self.dtype)
 
         y_tf = tf.convert_to_tensor(y, dtype=self.dtype)
 
-        xs_pred, Ps_pred, xs_filt, Ps_filt = tf.scan(
-            fn=self._get_filter_function(),
-            elems=y_tf,
-            initializer=(x, P, x, P),
-        )
+        xs_pred, Ps_pred, xs_filt, Ps_filt = self._filter_graph(y_tf, x_start, P_start)
 
-        dummy_cross = tf.zeros_like(Ps_filt[0])
-
-        elems = (xs_filt[:-1], Ps_filt[:-1], xs_pred[:-1], Ps_pred[:-1])
-        xs_smooth_vals, Ps_smooth_vals, Ps_cross_vals = tf.scan(
-            fn=self._get_smoother_with_cross_cov(),
-            elems=elems,
-            initializer=(xs_filt[-1], Ps_filt[-1], dummy_cross),
-            reverse=True,
-        )
+        xs_smooth_vals, Ps_smooth_vals, Ps_cross_vals = self._smoother_withcrosscov_graph(xs_pred, Ps_pred, xs_filt, Ps_filt)
 
         xs_smooth = tf.concat([xs_smooth_vals, xs_filt[-1:]], axis=0)
         Ps_smooth = tf.concat([Ps_smooth_vals, Ps_filt[-1:]], axis=0)
@@ -215,20 +276,11 @@ class BaseFilter(ABC):
             y_mean: smoothed sates implied observable mean
             y_cov: smoothed states implied observable covariance
         """
-        states_mean, states_cov = self.smooth(y, x0=x0, P0=P0)
-        obs_size = y.shape[1]
-        f, use_tf_map = self._get_fillna_from_state_function()
-        if use_tf_map:
-            y_mean, y_cov = tf.map_fn(
-                fn=f,
-                elems=(states_mean, states_cov),
-                fn_output_signature=(
-                    tf.TensorSpec((obs_size,), self.dtype),
-                    tf.TensorSpec((obs_size, obs_size), self.dtype),
-                ),
-            )
-        else:
-            y_mean, y_cov = f(states_mean, states_cov)
+        x, P = self.get_default_initial_state()
+        x_start = x if x0 is None else tf.convert_to_tensor(x0, dtype=self.dtype)
+        P_start = P if P0 is None else tf.convert_to_tensor(P0, dtype=self.dtype)
+        y_as_tf = tf.convert_to_tensor(y, dtype=self.dtype)
+        y_mean, y_cov = self._fillna_graph(y_as_tf, x_start, P_start)
         y_mean = y_mean.numpy()
         y_cov = y_cov.numpy()
         if keep_non_missing:
