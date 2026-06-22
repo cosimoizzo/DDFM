@@ -65,6 +65,14 @@ class BaseFilter(ABC):
                 tf.TensorSpec([state_size, state_size], self.dtype),
             ],
         )
+        self._onestep_graph = tf.function(
+            self._onestep_impl,
+            input_signature=[
+                tf.TensorSpec([None, obs_size], self.dtype),
+                tf.TensorSpec([state_size], self.dtype),
+                tf.TensorSpec([state_size, state_size], self.dtype),
+            ],
+        )
 
     @abstractmethod
     def predict_from_state(
@@ -128,6 +136,33 @@ class BaseFilter(ABC):
             initializer=(x_start, P_start, x_start, P_start),
         )
         return xs_pred, Ps_pred, xs_filt, Ps_filt
+
+    def _onestep_impl(
+        self, ys: tf.Tensor, x_start: tf.Tensor, P_start: tf.Tensor
+    ) -> Tuple[tf.Tensor, tf.Tensor]:
+        """
+        One-step-ahead predicted observables E[y_t | y_{0:t-1}] for every t, in a
+        single filter pass. The filter scan returns at position t the predicted
+        state for t+1, i.e. xs_pred[t] = E[x_{t+1} | y_{0:t}]. The predicted state
+        feeding observation t is therefore [x_start, xs_pred[0], ..., xs_pred[T-2]],
+        which we map through the observation equation.
+        """
+        xs_pred, Ps_pred, _, _ = self._filter_impl(ys, x_start, P_start)
+        xs_pred_obs = tf.concat([x_start[tf.newaxis], xs_pred[:-1]], axis=0)
+        Ps_pred_obs = tf.concat([P_start[tf.newaxis], Ps_pred[:-1]], axis=0)
+        f, use_tf_map = self._get_fillna_from_state_function()
+        if use_tf_map:
+            y_mean, y_cov = tf.map_fn(
+                fn=f,
+                elems=(xs_pred_obs, Ps_pred_obs),
+                fn_output_signature=(
+                    tf.TensorSpec((self.obs_size,), self.dtype),
+                    tf.TensorSpec((self.obs_size, self.obs_size), self.dtype),
+                ),
+            )
+        else:
+            y_mean, y_cov = f(xs_pred_obs, Ps_pred_obs)
+        return y_mean, y_cov
 
     def _smoother_impl(
         self,
@@ -319,3 +354,33 @@ class BaseFilter(ABC):
             not_nan = ~np.isnan(y)
             y_mean[not_nan] = y[not_nan]
         return y_mean, y_cov
+
+    def one_step_ahead(
+        self,
+        y: np.ndarray,
+        x0: Optional[np.ndarray] = None,
+        P0: Optional[np.ndarray] = None,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        One-step-ahead predicted observables for the whole series in a single
+        filter pass: y_mean[t] = E[y_t | y_{0:t-1}], y_cov[t] = Cov(y_t | y_{0:t-1}).
+        This replaces a rolling re-filter (one full filter per step) with a single pass,
+        exploiting the recursive nature of the filter. For a rolling 1-step-ahead OOS forecast over a series
+        [history; future], the forecasts for the future block are exactly y_mean over those indices.
+
+        Args:
+            y: observable variables
+            x0: initial state mean (optional, if not provided default starting state is used), this is used as the
+                predicted state for the first observation in y.
+            P0: initial state covariance (optional, if not provided default starting covariance is used)
+
+        Returns:
+            y_mean: one step ahead prediction means of the observables
+            y_cov: one step ahead prediction covariances of the observables
+        """
+        x, P = self.get_default_initial_state()
+        x_start = x if x0 is None else tf.convert_to_tensor(x0, dtype=self.dtype)
+        P_start = P if P0 is None else tf.convert_to_tensor(P0, dtype=self.dtype)
+        y_as_tf = tf.convert_to_tensor(y, dtype=self.dtype)
+        y_mean, y_cov = self._onestep_graph(y_as_tf, x_start, P_start)
+        return y_mean.numpy(), y_cov.numpy()

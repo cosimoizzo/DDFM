@@ -207,6 +207,22 @@ class DDFM(FactorModel):
         mean_df, _ = self.predict_with_covariance(data, steps_ahead)
         return mean_df
 
+    def predict_one_step_ahead(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        One-step-ahead predicted observables for the whole series in a single
+        filter pass: row t = E[y_t | y_{0:t-1}], in the original scale.
+
+        For a rolling 1-step OOS forecast over [history; future], the forecasts
+        for the future block equal the rows of this output at those indices.
+        """
+        if self.state_space is None:
+            raise ValueError("State space must be built before making inference")
+        data_sorted = data[self.variable_order].sort_index()
+        y_mean, _ = self.state_space.one_step_ahead(data_sorted.values)
+        return pd.DataFrame(
+            y_mean, index=data_sorted.index, columns=self.variable_order
+        )
+
     def get_factors(self, data: pd.DataFrame) -> pd.DataFrame:
         """
         Return Kalman-smoothed latent factors using the fitted state space.

@@ -268,6 +268,21 @@ class StateSpace:
         y_mean, y_cov = self.ssm_repr.fill_na(y_cpy)
         return self._undo_scale_data(y_mean, y_cov)
 
+    def one_step_ahead(self, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        One-step-ahead predicted observables for the whole series in a single
+        filter pass: row t = E[y_t | y_{0:t-1}].
+
+        Args:
+            y: observable realised values
+
+        Returns:
+            one-step-ahead mean and covariance, in the original (un-scaled) space
+        """
+        y_cpy = self._scale_data(y)
+        y_mean, y_cov = self.ssm_repr.one_step_ahead(y_cpy)
+        return self._undo_scale_data(y_mean, y_cov)
+
     def _undo_scale_data(
         self, mean: np.ndarray, cov: np.ndarray, round_to: int = 10
     ) -> Tuple[np.ndarray, np.ndarray]:
