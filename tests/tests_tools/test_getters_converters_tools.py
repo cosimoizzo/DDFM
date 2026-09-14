@@ -331,5 +331,37 @@ class TestGettersAndConvertersTools(unittest.TestCase):
         pd.testing.assert_frame_equal(result, expected)
 
 
+class TestGetIdioMissingData(unittest.TestCase):
+    """
+    Pins two fixes in get_idio: (i) the AR(1) coefficient is estimated from true
+    (t, t-1) pairs, so missing data no longer biases it towards zero; (ii) the
+    quarterly branch does not write NaN into the caller's array.
+    """
+
+    def test_ar1_unbiased_under_missing_data(self):
+        rng = np.random.RandomState(0)
+        T, phi_true = 20000, 0.8
+        eps = np.zeros((T, 1))
+        for t in range(1, T):
+            eps[t, 0] = phi_true * eps[t - 1, 0] + rng.normal()
+        obs = np.ones((T, 1), dtype=bool)
+        obs[rng.choice(T, size=int(0.3 * T), replace=False), 0] = False
+        phi, _, _ = get_idio(eps, obs)
+        # the old consecutive-selected-entries pairing gave ~0.68 here
+        self.assertLess(abs(phi[0, 0] - phi_true), 0.02)
+
+    def test_quarterly_branch_does_not_mutate_input(self):
+        rng = np.random.RandomState(1)
+        T = 200
+        eps = np.zeros((T, 2))
+        for t in range(1, T):
+            eps[t] = 0.5 * eps[t - 1] + 0.1 * rng.standard_normal(2)
+        obs = np.ones((T, 2), dtype=bool)
+        obs[5:9, 1] = False  # missing values in the quarterly column
+        eps_before = eps.copy()
+        get_idio(eps, obs, quarterly_start=1)
+        np.testing.assert_array_equal(eps, eps_before)
+
+
 if __name__ == "__main__":
     unittest.main()

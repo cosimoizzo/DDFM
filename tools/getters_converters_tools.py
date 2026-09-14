@@ -354,10 +354,11 @@ def get_idio(
     cond_mean = np.zeros_like(eps)
     end_nn_quarterly = quarterly_start if quarterly_start is not None else eps.shape[1]
     for j in range(end_nn_quarterly):
-        to_select = np.r_[False, idx_no_missings[:-1, j] & idx_no_missings[1:, j]]
-        if np.sum(to_select) >= min_obs:
-            this_eps = eps[to_select, j]
-            cov_eps = np.cov(this_eps[1:], this_eps[:-1])
+        to_select = idx_no_missings[1:, j] & idx_no_missings[:-1, j]
+        if to_select.sum() >= min_obs:#
+            cur = eps[1:, j][to_select]
+            lag = eps[:-1, j][to_select]
+            cov_eps = np.cov(cur, lag)
             phi[j, j] = np.clip(
                 cov_eps[0, 1] / ((cov_eps[0, 0] * cov_eps[1, 1]) ** 0.5), -0.99, 0.99
             )
@@ -376,9 +377,8 @@ def get_idio(
                 cond_mean[:, j] = 0
 
     for j in range(end_nn_quarterly, eps.shape[1]):
-        tmp_eps = eps[:, j]
-        tmp_eps[~idx_no_missings[:, j]] = np.nan
-        mod_idio_qmm = QuarterlyAR1(eps[:, j])
+        tmp_eps = np.where(idx_no_missings[:, j], eps[:, j], np.nan)
+        mod_idio_qmm = QuarterlyAR1(tmp_eps)
         res_idio_qmm = mod_idio_qmm.fit(maxiter=50, return_params=True, disp=False)
         res_idio_qmm = mod_idio_qmm.fit_em(res_idio_qmm, maxiter=50, return_params=True)
         res = mod_idio_qmm._em_expectation_step(res_idio_qmm)
@@ -419,5 +419,10 @@ def get_data_with_lags(
         df = (
             df.iloc[lags_input:].reset_index(drop=True).fillna(value=0)
         )  # fill initial missing values with 0 mean
-
+        # NB: the NaN created by shift() are all in rows < lags_input and are removed by
+        # the iloc above. What this fills is genuine missing data that survives into the
+        # lag columns - in particular from the first lags_input rows of the source, which
+        # the DDFM training loop never imputes (they carry no target, only lags). 0 is the
+        # mean on the standardised scale. Side effect: with lags_input > 0 pre-training
+        # sees mean-imputed targets instead of dropping incomplete rows.
     return df

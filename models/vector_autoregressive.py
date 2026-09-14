@@ -44,15 +44,15 @@ class VARLayerClosedForm(Layer):
         config.update({"var_order": self.var_order})
         return config
 
-    def build_lagged_matrix(self, x):
+    def build_lagged_matrix(self, x, start = 1):
         lags = []
         for lag in range(self.var_order):
-            rolled = tf.roll(x, shift=lag + 1, axis=0)
+            rolled = tf.roll(x, shift=lag + start, axis=0)
             mask = tf.concat(
                 [
-                    tf.zeros((lag + 1, tf.shape(x)[1]), dtype=x.dtype),
+                    tf.zeros((lag + start, tf.shape(x)[1]), dtype=x.dtype),
                     tf.ones(
-                        (tf.shape(x)[0] - (lag + 1), tf.shape(x)[1]), dtype=x.dtype
+                        (tf.shape(x)[0] - (lag + start), tf.shape(x)[1]), dtype=x.dtype
                     ),
                 ],
                 axis=0,
@@ -91,7 +91,7 @@ class VARAutoencoder(tf.keras.Model):
     def call(self, x, training=False):
         z_latent = self.encoder(x)
         if training:
-            self.var_layer.update_weights_closed_form(z_latent.numpy())
+            self.var_layer.update_weights_closed_form(z_latent)
         z_pred = self.var_layer(z_latent)
         x_recon = self.decoder(z_latent)
         return x_recon, z_latent, z_pred

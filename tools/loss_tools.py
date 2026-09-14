@@ -12,8 +12,8 @@ def mse_missing(y_actual: tf.Tensor, y_predicted: tf.Tensor) -> tf.Tensor:
     mask = tf.cast(~tf.math.is_nan(y_actual), y_predicted.dtype)
     y_actual = tf.where(mask > 0, y_actual, tf.zeros_like(y_actual))
     sq_error = tf.square(y_actual - y_predicted) * mask
-    return tf.reduce_sum(sq_error, axis=-1) / tf.maximum(
-        tf.reduce_sum(mask, axis=-1), 1.0
+    return tf.reduce_sum(sq_error) / tf.maximum(
+        tf.reduce_sum(mask), 1.0
     )
 
 
