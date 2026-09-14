@@ -1,5 +1,5 @@
 import logging
-from typing import Tuple, List, Optional, Any
+from typing import Tuple, List, Optional, Any, Union
 
 import numpy as np
 import pandas as pd
@@ -28,14 +28,122 @@ _USE_M_UKF = True
 
 class DDFM(FactorModel):
     """
-    Deep Dynamic Factor Models
+    Deep Dynamic Factor Model.
+
+    Thin wrapper around _DDFM handling multiple random restarts: one _DDFM is
+    fitted per seed and the run with the lowest final training loss is kept.
+    All estimation logic lives in _DDFM. Attributes and methods of the selected
+    run (predict_with_covariance, predict_from_states, build_state_space,
+    state_space, last_neurons, factors_filtered, ...) are reachable through
+    this object once fit() has been called.
     """
 
     def __init__(
         self,
         lags_input: int = 0,
-        structure_encoder: tuple = (16, 4),
-        structure_decoder: tuple = None,
+        structure_encoder: Tuple[int] = (16, 4),
+        structure_decoder: Optional[Tuple[int]] = None,
+        use_bias: bool = True,
+        factor_order: int = 2,
+        var_loss_weight: float = 0.0,
+        seed: Union[Tuple[int], int] = 3,
+        batch_norm: bool = True,
+        link: str = "relu",
+        learning_rate: float = 0.005,
+        optimizer: str = "Adam",
+        decay_learning_rate: bool = True,
+        clipnorm: Optional[float] = None,
+        epochs: int = 150,
+        batch_size: int = 250,
+        max_iter: int = 200,
+        tolerance: float = 5e-4,
+        disp: int = 10,
+        logger=logging.getLogger("DDFM"),
+        dtype: Optional[tf.DType] = tf.float32,
+    ):
+        """
+        Same arguments as _DDFM, except:
+            seed: one seed, or several; with several, one _DDFM is fitted per seed
+                and the one achieving the lowest training loss is kept.
+        """
+        # collect the constructor arguments once; they are forwarded verbatim to _DDFM
+        kwargs = {k: v for k, v in locals().items() if k not in ("self", "seed", "__class__")}
+        super().__init__(r=structure_encoder[-1])
+        self._kwargs = kwargs
+        self.seeds = (seed,) if isinstance(seed, int) else tuple(seed)
+        self.variable_order = None
+        self._best_model: Optional["_DDFM"] = None
+        self._best_seed: Optional[int] = None
+
+    def fit(
+        self,
+        data: pd.DataFrame,
+        build_state_space: bool = True,
+        vars_mq_restrictions: List[Any] = None,
+    ) -> None:
+        """
+        Fit one _DDFM per seed and keep the run with the lowest training loss.
+        Args:
+            data: data for training
+            build_state_space: whether to build the final state space representation for model inference
+            vars_mq_restrictions: list of quarterly variables where monthly to quarterly aggregation restrictions are
+                applied (the quarterly variable is assumed to be a flow variable)
+        """
+        best = None
+        for seed in self.seeds:
+            run = _DDFM(seed=seed, **self._kwargs)
+            run.fit(data, build_state_space=build_state_space, vars_mq_restrictions=vars_mq_restrictions)
+            if np.isfinite(run.loss_now) and (best is None or run.loss_now < best.loss_now):
+                best = run
+        if best is None:
+            raise RuntimeError("All seed initialisations produced non-finite loss.")
+        self._best_model, self._best_seed = best, best.seed
+        # honour the FactorModel contract on the wrapper itself
+        self.mean_data = best.mean_data
+        self.sigma_data = best.sigma_data
+        self.variable_order = best.variable_order
+        self._fitted = True
+
+    # FactorModel interface: explicit so the ABC is satisfied; arguments are
+    # forwarded positionally so a keyword rename in _DDFM cannot silently break them.
+    def get_factors(self, data: pd.DataFrame) -> pd.DataFrame:
+        return self._require_fitted().get_factors(data)
+
+    def fill_na(self, data: pd.DataFrame) -> pd.DataFrame:
+        return self._require_fitted().fill_na(data)
+
+    def predict(self, data: pd.DataFrame, steps_ahead: int = 1) -> pd.DataFrame:
+        return self._require_fitted().predict(data, steps_ahead)
+
+    def predict_one_step_ahead(self, data: pd.DataFrame) -> pd.DataFrame:
+        return self._require_fitted().predict_one_step_ahead(data)
+
+    def _require_fitted(self) -> "_DDFM":
+        if self._best_model is None:
+            raise RuntimeError("Call fit() before inference.")
+        return self._best_model
+
+    def __getattr__(self, name: str):
+        # Reached only when normal lookup fails: forward public attributes of the
+        # selected run. self.__dict__ is read directly to avoid recursion before
+        # _best_model exists (during __init__ and unpickling).
+        best = self.__dict__.get("_best_model")
+        if name.startswith("_") or best is None:
+            hint = "" if name.startswith("_") else " (available after fit())"
+            raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}{hint}")
+        return getattr(best, name)
+
+
+class _DDFM(FactorModel):
+    """
+    Actual class implementing the estimation routine given a random seed.
+    """
+
+    def __init__(
+        self,
+        lags_input: int = 0,
+        structure_encoder: Tuple[int] = (16, 4),
+        structure_decoder: Optional[Tuple[int]] = None,
         use_bias: bool = True,
         factor_order: int = 2,
         var_loss_weight: float = 0.0,
@@ -49,7 +157,7 @@ class DDFM(FactorModel):
         epochs: int = 150,
         batch_size: int = 250,
         max_iter: int = 200,
-        tolerance: float = 0.0005,
+        tolerance: float = 5e-4,
         disp: int = 10,
         logger=logging.getLogger("DDFM"),
         dtype: Optional[tf.DType] = tf.float32,
@@ -87,6 +195,8 @@ class DDFM(FactorModel):
         self.factor_order = factor_order
         if factor_order not in [1, 2]:
             raise ValueError("factor_order must be 1 or 2")
+        if max_iter < 1:
+            raise ValueError("max_iter must be >= 1: pre-training alone is not a fitted model")
         self.var_loss_weight = var_loss_weight
         self.lags_input = lags_input
         # autoencoder structure
@@ -157,6 +267,7 @@ class DDFM(FactorModel):
             None, it updates internal attributes and makes the model ready for inference
         """
         self._training_data_set_up(data, vars_mq_restrictions)
+        data = data[self.variable_order].sort_index()
         quarterly_start = (
             data.shape[1] - len(vars_mq_restrictions) if vars_mq_restrictions else None
         )
@@ -362,7 +473,7 @@ class DDFM(FactorModel):
                 v for v in data.columns if v not in vars_mq_restrictions
             ] + vars_mq_restrictions
             data = data[vars_order]
-        data.sort_index(inplace=True)
+        data = data.sort_index()
         self.variable_order = data.columns
         self.mean_data = data.mean().values
         self.sigma_data = data.std().values
@@ -596,7 +707,7 @@ class DDFM(FactorModel):
                 + var_loss
             )
             # check convergence
-            if self.i_iter > 1:
+            if self.i_iter > 0:
                 delta = (
                     2
                     * np.abs(self.loss_now - loss_prev)

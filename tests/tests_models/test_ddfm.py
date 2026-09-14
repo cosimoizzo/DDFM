@@ -10,6 +10,86 @@ from models.state_space.state_space_wrapper import StateSpace
 from synthetic_dgp.simulate import SIMULATE, QuarterlyVars, AggregationInstr
 
 
+class TestDDFMWrapper(unittest.TestCase):
+    """
+    Exercises the public DDFM object itself (the other classes test _best_model directly):
+    seed selection, the FactorModel contract on the wrapper, and attribute forwarding to
+    the selected run. Deliberately small: it checks wiring, not estimation quality.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sim = SIMULATE(seed=1, n=8, r=2, poly_degree=1)
+        cls.x = pd.DataFrame(cls.sim.simulate(60, portion_missings=0.05))
+        cls.seeds = (3, 4)
+        cls.ddfm = DDFM(
+            structure_encoder=(2,),
+            factor_order=1,
+            use_bias=False,
+            max_iter=2,
+            epochs=5,
+            seed=cls.seeds,
+        )
+        cls.ddfm.fit(cls.x, build_state_space=True)
+
+    def test_before_fit(self):
+        fresh = DDFM(structure_encoder=(2,), seed=3)
+        self.assertIsInstance(fresh, FactorModel)
+        self.assertFalse(fresh._fitted)
+        with self.assertRaises(RuntimeError):
+            fresh.predict(self.x, steps_ahead=1)
+        with self.assertRaises(AttributeError):
+            fresh.state_space  # forwarded attribute, only available after fit
+
+    def test_seed_selection(self):
+        self.assertIn(self.ddfm._best_seed, self.seeds)
+        self.assertEqual(self.ddfm._best_model.seed, self.ddfm._best_seed)
+        self.assertTrue(np.isfinite(self.ddfm._best_model.loss_now))
+
+    def test_factor_model_contract_on_wrapper(self):
+        self.assertTrue(self.ddfm._fitted)
+        np.testing.assert_array_equal(self.ddfm.mean_data, self.ddfm._best_model.mean_data)
+        np.testing.assert_array_equal(self.ddfm.sigma_data, self.ddfm._best_model.sigma_data)
+        self.assertEqual(list(self.ddfm.variable_order), list(self.x.columns))
+        np.testing.assert_allclose(self.ddfm._unstd(self.ddfm._std(self.x)), self.x.values)
+
+    def test_interface_methods(self):
+        n = self.x.shape[1]
+        self.assertEqual(self.ddfm.predict(self.x, steps_ahead=2).shape, (3, n))
+        self.assertEqual(self.ddfm.predict_one_step_ahead(self.x).shape, self.x.shape)
+        self.assertEqual(self.ddfm.get_factors(self.x).shape, (len(self.x), 2))
+        filled = self.ddfm.fill_na(self.x)
+        self.assertEqual(filled.shape, self.x.shape)
+        self.assertFalse(filled.isnull().any().any())
+
+    def test_forwarded_methods_and_attributes(self):
+        n = self.x.shape[1]
+        mean, cov = self.ddfm.predict_with_covariance(self.x, steps_ahead=2)
+        self.assertEqual(mean.shape, (3, n))
+        self.assertEqual(cov.shape, (3 * n, n))
+        xf, pf = self.ddfm.state_space.filter(self.x.values)
+        self.assertEqual(self.ddfm.predict_from_states(xf[-1], pf[-1], 1)[0].shape, (2, n))
+        self.assertIsInstance(self.ddfm.build_state_space(), StateSpace)
+        self.assertEqual(self.ddfm.factors_filtered.shape, (len(self.x), 2))
+        self.assertEqual(self.ddfm.factors_smoothed.shape, (len(self.x), 2))
+        self.assertEqual(self.ddfm.last_neurons.shape[1], len(self.x))
+        # forwarding never exposes private names of the inner run
+        with self.assertRaises(AttributeError):
+            self.ddfm._data_tmp
+
+    def test_forwarding_is_the_same_object(self):
+        self.assertIs(self.ddfm.state_space, self.ddfm._best_model.state_space)
+        pd.testing.assert_frame_equal(
+            self.ddfm.predict(self.x, steps_ahead=1),
+            self.ddfm._best_model.predict(self.x, steps_ahead=1),
+        )
+
+
+"""
+The following tests are run on the _DDFM instance obtained via DDFM, as the methods of DDFM fall back to _DDFM.
+"""
+
+
 class TestDDFM(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -55,7 +135,7 @@ class TestDDFM(unittest.TestCase):
             seed=seed,
         )
         ddfm.fit(pd.DataFrame(self.x), build_state_space=True)
-        return ddfm
+        return ddfm._best_model
 
     def _single_test_fit(self, ddfm):
         last_neurons = np.mean(ddfm.last_neurons, axis=0)
@@ -290,7 +370,7 @@ class TestDDFMMonthlyQuarterly(TestDDFM):
         )
         df_x = pd.DataFrame(self.x)
         ddfm.fit(df_x, build_state_space=True, vars_mq_restrictions=self.idx_quarterly)
-        return ddfm
+        return ddfm._best_model
 
 
 class TestDDFMMonthlyQuarterlyNonLinDec(TestDDFM):
@@ -393,7 +473,43 @@ class TestDDFMMonthlyQuarterlyNonLinDec(TestDDFM):
         )
         df_x = pd.DataFrame(self.x)
         ddfm.fit(df_x, build_state_space=True, vars_mq_restrictions=self.idx_quarterly)
-        return ddfm
+        return ddfm._best_model
+
+
+class TestDDFMFixes(unittest.TestCase):
+    """Small, fast fits pinning two fit-time behaviours of DDFM."""
+
+    @staticmethod
+    def _model(seed=3):
+        return DDFM(
+            structure_encoder=(2,), factor_order=1, use_bias=False, max_iter=2, epochs=5, seed=seed
+        )
+
+    def test_fit_uses_variable_order_when_quarterly_columns_come_first(self):
+        """
+        With vars_mq_restrictions the columns are reordered (quarterly last). The
+        filtered/smoothed factors stored by fit() must be computed on that order,
+        not on the caller's column order.
+        """
+        sim = SIMULATE(seed=11, n=8, r=2, poly_degree=1)
+        x = sim.simulate(90, quarterly_vars=QuarterlyVars([0, 1], aggregation=AggregationInstr.MM))
+        df = pd.DataFrame(x, columns=[f"v{i}" for i in range(8)])
+        m = self._model()
+        m.fit(df, build_state_space=True, vars_mq_restrictions=["v0", "v1"])
+        self.assertEqual(list(m.variable_order), ["v2", "v3", "v4", "v5", "v6", "v7", "v0", "v1"])
+        expected = m.state_space.filter(df[m.variable_order].values)[0][:, :2]
+        np.testing.assert_array_equal(m.factors_filtered, expected)
+
+    def test_one_step_ahead_equals_rolling_forecast(self):
+        sim = SIMULATE(seed=5, n=6, r=2, poly_degree=1)
+        x = sim.simulate(80, portion_missings=0.05)
+        T_train = 70
+        m = self._model()
+        m.fit(pd.DataFrame(x[:T_train]), build_state_space=True)
+        single = m.predict_one_step_ahead(pd.DataFrame(x)).values
+        for t in range(T_train, x.shape[0]):
+            rolling = m.predict(pd.DataFrame(x[:t]), steps_ahead=1).values[1]
+            np.testing.assert_allclose(single[t], rolling, rtol=1e-4, atol=1e-5)
 
 
 if __name__ == "__main__":
