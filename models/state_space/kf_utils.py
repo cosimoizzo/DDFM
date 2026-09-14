@@ -183,7 +183,7 @@ class KalmanFilter(BaseFilter):
                 self.observation_map,
                 state_covariance,
                 self.observation_map,
-            )
+            ) + self.observation_covariance[tf.newaxis]
             return y_pred, S_pred
 
         return map_fn, use_tf_map
@@ -209,7 +209,7 @@ class KalmanFilter(BaseFilter):
         S_pred = (
             self.observation_map
             @ predicted_state_covariance
-            @ tf.transpose(self.observation_map)
+            @ tf.transpose(self.observation_map) + self.observation_covariance
         )
         # steps ahead
         if steps_ahead > 0:
@@ -221,7 +221,7 @@ class KalmanFilter(BaseFilter):
                     tf.linalg.matvec(self.observation_map, x_pred)
                     + self.observation_offsets
                 )
-                S = self.observation_map @ P_pred @ tf.transpose(self.observation_map)
+                S = self.observation_map @ P_pred @ tf.transpose(self.observation_map) + self.observation_covariance
                 return x_pred, P_pred, y_pred, S
 
             dummy = tf.zeros([steps_ahead], dtype=self.dtype)  # (n_steps,)
